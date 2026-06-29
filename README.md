@@ -498,7 +498,6 @@ chore: configure Docker
 If you like this project, please consider giving it a **⭐ Star** on GitHub.
 
 It motivates continued development and helps others discover the project.
-
 ---
 
 # 🚧 Project Status
