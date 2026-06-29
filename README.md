@@ -6,7 +6,6 @@
     Analyze GitHub profiles, generate developer insights, and empower recruiters with AI-driven analytics.
   </p>
 </p>
-
 ---
 
 ## 📖 About the Project
