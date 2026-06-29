@@ -493,20 +493,6 @@ chore: configure Docker
 
 ---
 
-# 🤝 Contributing
-
-Contributions are welcome!
-
-Please fork the repository and submit a Pull Request.
-
----
-
-# 📄 License
-
-Licensed under the **MIT License**.
-
----
-
 # ⭐ Support
 
 If you like this project, please consider giving it a **⭐ Star** on GitHub.
