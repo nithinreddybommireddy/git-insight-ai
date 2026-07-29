@@ -1,0 +1,115 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --background: oklch(0.98 0 0);
+  --foreground: oklch(0.15 0.04 260);
+  --card: oklch(0.97 0.01 260);
+  --card-foreground: oklch(0.15 0.04 260);
+  --primary: oklch(0.45 0.24 280);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.7 0.15 220);
+  --secondary-foreground: oklch(0.15 0.04 260);
+  --muted: oklch(0.94 0.02 260);
+  --muted-foreground: oklch(0.55 0.04 260);
+  --accent: oklch(0.65 0.2 180);
+  --accent-foreground: oklch(0.15 0.04 260);
+  --border: oklch(0.9 0.02 260);
+  --ring: oklch(0.45 0.24 280);
+  --radius: 0.75rem;
+}
+
+.dark {
+  --background: oklch(0.12 0.03 260);
+  --foreground: oklch(0.92 0.02 260);
+  --card: oklch(0.16 0.03 260);
+  --card-foreground: oklch(0.92 0.02 260);
+  --primary: oklch(0.6 0.25 280);
+  --primary-foreground: oklch(0.98 0 0);
+  --secondary: oklch(0.5 0.15 220);
+  --secondary-foreground: oklch(0.92 0.02 260);
+  --muted: oklch(0.2 0.03 260);
+  --muted-foreground: oklch(0.6 0.04 260);
+  --accent: oklch(0.55 0.2 180);
+  --accent-foreground: oklch(0.92 0.02 260);
+  --border: oklch(0.25 0.03 260);
+  --ring: oklch(0.6 0.25 280);
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* Glassmorphism utility */
+.glass {
+  background: oklch(from var(--card) l c h / 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid oklch(from var(--border) l c h / 0.5);
+}
+
+.glass-strong {
+  background: oklch(from var(--card) l c h / 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid oklch(from var(--border) l c h / 0.6);
+}
+
+/* Gradient text */
+.gradient-text {
+  background: linear-gradient(135deg, var(--primary), var(--secondary), var(--accent));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Animated gradient background */
+@keyframes gradient-shift {
+  0% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.animated-gradient {
+  background: linear-gradient(-45deg, oklch(0.4 0.25 280), oklch(0.3 0.2 240), oklch(0.35 0.2 200), oklch(0.4 0.2 320));
+  background-size: 400% 400%;
+  animation: gradient-shift 15s ease infinite;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--primary);
+  border-radius: 4px;
+}
+
+/* Loading shimmer */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--muted) 25%,
+    oklch(from var(--muted) l c h / 0.5) 50%,
+    var(--muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 2s infinite;
+}
