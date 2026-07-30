@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Search,
   Code2,
@@ -11,6 +12,10 @@ import {
   Sun,
   Moon,
   ExternalLink,
+  User,
+  LogOut,
+  LayoutDashboard,
+  LogIn,
 } from "lucide-react";
 
 export function Navbar() {
@@ -18,6 +23,7 @@ export function Navbar() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const { user, isAuthenticated, logout } = useAuth();
 
   useEffect(() => {
     const handleScroll = () => setScrolled(window.scrollY > 20);
@@ -61,6 +67,12 @@ export function Navbar() {
             >
               Search
             </Link>
+            <Link
+              to="/compare"
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200"
+            >
+              Compare
+            </Link>
 
             {/* Theme Toggle */}
             <button
@@ -88,14 +100,58 @@ export function Navbar() {
 
             <div className="w-px h-6 bg-border mx-2" />
 
+            {/* Auth Section */}
+            {isAuthenticated && user ? (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/dashboard")}
+                  className="gap-2"
+                >
+                  <div className="w-6 h-6 rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-[10px] font-bold text-white">
+                    {user.name.charAt(0).toUpperCase()}
+                  </div>
+                  <span className="text-sm">{user.name.split(" ")[0]}</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={logout}
+                  className="gap-1.5 text-muted-foreground"
+                >
+                  <LogOut className="w-4 h-4" />
+                </Button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => navigate("/login")}
+                  className="gap-1.5"
+                >
+                  <LogIn className="w-4 h-4" />
+                  Sign In
+                </Button>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => navigate("/register")}
+                >
+                  Sign Up
+                </Button>
+              </div>
+            )}
+
             <Button
               variant="primary"
               size="sm"
               onClick={() => navigate("/search")}
-              className="gap-2"
+              className="gap-2 ml-2"
             >
               <Search className="w-4 h-4" />
-              Search Profile
+              Search
             </Button>
           </div>
 
@@ -131,7 +187,7 @@ export function Navbar() {
       <div
         className={cn(
           "md:hidden glass-strong border-t border-border overflow-hidden transition-all duration-400 ease-in-out",
-          mobileOpen ? "max-h-80" : "max-h-0"
+          mobileOpen ? "max-h-96" : "max-h-0"
         )}
       >
         <div className="px-4 py-4 space-y-2">
@@ -149,20 +205,56 @@ export function Navbar() {
           >
             Search Profiles
           </Link>
-          <div className="pt-2">
-            <Button
-              variant="primary"
-              size="md"
-              className="w-full gap-2"
-              onClick={() => {
-                setMobileOpen(false);
-                navigate("/search");
-              }}
-            >
-              <Search className="w-4 h-4" />
-              Search Profile
-            </Button>
-          </div>
+          <Link
+            to="/compare"
+            className="block px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors"
+            onClick={() => setMobileOpen(false)}
+          >
+            Compare
+          </Link>
+          {isAuthenticated ? (
+            <>
+              <Link
+                to="/dashboard"
+                className="flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors"
+                onClick={() => setMobileOpen(false)}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                Dashboard
+              </Link>
+              <button
+                onClick={() => { logout(); setMobileOpen(false); }}
+                className="flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors w-full text-left"
+              >
+                <LogOut className="w-4 h-4" />
+                Logout
+              </button>
+            </>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="block px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors"
+                onClick={() => setMobileOpen(false)}
+              >
+                Sign In
+              </Link>
+              <div className="pt-2">
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    setMobileOpen(false);
+                    navigate("/register");
+                  }}
+                >
+                  <User className="w-4 h-4" />
+                  Sign Up
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </nav>
