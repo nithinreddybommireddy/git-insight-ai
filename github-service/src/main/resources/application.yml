@@ -28,3 +28,7 @@ eureka:
 
 github:
   token: ${GITHUB_TOKEN:}
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY:}

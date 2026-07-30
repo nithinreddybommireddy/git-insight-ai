@@ -10,6 +10,10 @@ import { ComparePage } from "@/pages/ComparePage";
 import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
 import { Dashboard } from "@/pages/Dashboard";
+import { RecruiterDashboard } from "@/pages/RecruiterDashboard";
+import { CandidateDetails } from "@/pages/CandidateDetails";
+import { AIAnalysis } from "@/pages/AIAnalysis";
+import { ReportsPage } from "@/pages/ReportsPage";
 import type { ReactNode } from "react";
 
 const queryClient = new QueryClient({
@@ -58,6 +62,32 @@ function AppRoutes() {
             </RequireAuth>
           }
         />
+        <Route
+          path="/recruiter"
+          element={
+            <RequireAuth>
+              <RecruiterDashboard />
+            </RequireAuth>
+          }
+        />
+        <Route
+          path="/recruiter/candidate/:username"
+          element={
+            <RequireAuth>
+              <CandidateDetails />
+            </RequireAuth>
+          }
+        />
+        <Route path="/ai" element={<AIAnalysis />} />
+        <Route
+          path="/reports"
+          element={
+            <RequireAuth>
+              <ReportsPage />
+            </RequireAuth>
+          }
+        />
+        <Route path="/reports/:username" element={<ReportsPage />} />
       </Routes>
     </>
   );

@@ -52,7 +52,7 @@ export function Dashboard() {
       icon: TrendingUp,
       title: "Compare Developers",
       description: "Compare two GitHub profiles side by side",
-      action: () => toast.success("Compare feature coming soon!", { icon: "🚧" }),
+      action: () => navigate("/compare"),
       gradient: "from-cyan-500 to-blue-500",
     },
     {

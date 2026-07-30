@@ -15,7 +15,9 @@ import {
   User,
   LogOut,
   LayoutDashboard,
+  Users,
   LogIn,
+  Brain,
 } from "lucide-react";
 
 export function Navbar() {
@@ -66,13 +68,28 @@ export function Navbar() {
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200"
             >
               Search
-            </Link>
-            <Link
+            </Link>            <Link
               to="/compare"
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200"
             >
               Compare
             </Link>
+            <Link
+              to="/ai"
+              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200 inline-flex items-center gap-1.5"
+            >
+              <Brain className="w-3.5 h-3.5" />
+              AI
+            </Link>
+            {isAuthenticated && (
+              <Link
+                to="/recruiter"
+                className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200 inline-flex items-center gap-1.5"
+              >
+                <Users className="w-3.5 h-3.5" />
+                Recruiter
+              </Link>
+            )}
 
             {/* Theme Toggle */}
             <button
@@ -212,6 +229,14 @@ export function Navbar() {
           >
             Compare
           </Link>
+          <Link
+            to="/ai"
+            className="flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors"
+            onClick={() => setMobileOpen(false)}
+          >
+            <Brain className="w-4 h-4" />
+            AI Analysis
+          </Link>
           {isAuthenticated ? (
             <>
               <Link
@@ -221,6 +246,14 @@ export function Navbar() {
               >
                 <LayoutDashboard className="w-4 h-4" />
                 Dashboard
+              </Link>
+              <Link
+                to="/recruiter"
+                className="flex items-center gap-2 px-4 py-3 rounded-xl hover:bg-muted/50 text-sm text-foreground transition-colors"
+                onClick={() => setMobileOpen(false)}
+              >
+                <Users className="w-4 h-4" />
+                Recruiter
               </Link>
               <button
                 onClick={() => { logout(); setMobileOpen(false); }}

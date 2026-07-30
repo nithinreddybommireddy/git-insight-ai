@@ -86,9 +86,62 @@ export interface Repository {
   activityScore: number;
 }
 
+export interface MetricScore {
+  score: number;
+  weight: number;
+  label: string;
+  description: string;
+  explanation: string;
+  improvementSuggestion: string;
+  trend: "up" | "down" | "stable";
+  icon: string;
+}
+
+export interface DeveloperInsights {
+  overallAssessment: string;
+  strongestSkill: string;
+  weakestArea: string;
+  collaborationAnalysis: string;
+  openSourceImpact: string;
+  technologyExpertise: string;
+  activityTrend: string;
+  repositoryQualityObs: string;
+  recommendations: string;
+}
+
 export interface DeveloperScore {
   username: string;
   overallScore: number;
+  level: string;
+
+  // 10 metrics
+  contributionRecency: number;
+  commitFrequency: number;
+  repositoryHealth: number;
+  repositoryQuality: number;
+  contributionConsistency: number;
+  languageDiversity: number;
+  collaboration: number;
+  openSourceImpact: number;
+  popularity: number;
+  maintenance: number;
+
+  // Detailed breakdowns
+  contributionRecencyDetails: MetricScore | null;
+  commitFrequencyDetails: MetricScore | null;
+  repositoryHealthDetails: MetricScore | null;
+  repositoryQualityDetails: MetricScore | null;
+  contributionConsistencyDetails: MetricScore | null;
+  languageDiversityDetails: MetricScore | null;
+  collaborationDetails: MetricScore | null;
+  openSourceImpactDetails: MetricScore | null;
+  popularityDetails: MetricScore | null;
+  maintenanceDetails: MetricScore | null;
+
+  // AI insights
+  insights: DeveloperInsights | null;
+
+  // Legacy fields
   totalStars: number;
   totalForks: number;
   totalRepositories: number;
@@ -97,7 +150,6 @@ export interface DeveloperScore {
   avgHealthScore: number;
   avgPopularityScore: number;
   avgMaintenanceScore: number;
-  level: string;
   contributionRecencyScore: number;
   commitFrequencyScore: number;
   consistencyScore: number;
@@ -194,3 +246,293 @@ export interface CompareResult {
   user1: CompareUserData;
   user2: CompareUserData;
 }
+
+// ==================== Recruiter Types ====================
+
+export interface SavedCandidate {
+  id: number;
+  candidateUsername: string;
+  candidateName: string | null;
+  candidateAvatarUrl: string | null;
+  candidateGithubId: number | null;
+  candidateScore: number | null;
+  candidateLevel: string | null;
+  candidateLanguages: string | null;
+  bookmarked: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecruiterNote {
+  id: number;
+  candidateUsername: string;
+  title: string | null;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface RecruiterStats {
+  savedCandidates: number;
+  totalNotes: number;
+}
+
+export interface GitHubOrg {
+  login: string;
+  avatarUrl: string;
+  description: string | null;
+}
+
+export interface GitHubPR {
+  number: number;
+  title: string;
+  state: string;
+  createdAt: string;
+  mergedAt: string | null;
+  repoName: string;
+  comments: number;
+}
+
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  state: string;
+  createdAt: string;
+  closedAt: string | null;
+  repoName: string;
+  labels: string[];
+}
+
+export interface GitHubCommit {
+  sha: string;
+  message: string;
+  date: string;
+  repoName: string;
+}
+
+export interface LanguageBreakdown {
+  language: string;
+  percentage: number;
+  repos: number;
+}
+
+export interface ContributionStats {
+  totalCommits: number;
+  totalPRs: number;
+  totalIssues: number;
+  reposContributedTo: number;
+  orgCount: number;
+}
+
+// ==================== Recruiter API ====================
+
+export const recruiterApi = {
+  saveCandidate: async (candidate: {
+    username: string;
+    name?: string;
+    avatarUrl?: string;
+    githubId?: number;
+    score?: number;
+    level?: string;
+    languages?: string;
+  }): Promise<ApiResponse<SavedCandidate>> => {
+    const { data } = await api.post<ApiResponse<SavedCandidate>>("/recruiter/candidates/save", candidate);
+    return data;
+  },
+
+  unsaveCandidate: async (username: string): Promise<ApiResponse<void>> => {
+    const { data } = await api.delete<ApiResponse<void>>(`/recruiter/candidates/${username}`);
+    return data;
+  },
+
+  listSavedCandidates: async (): Promise<ApiResponse<SavedCandidate[]>> => {
+    const { data } = await api.get<ApiResponse<SavedCandidate[]>>("/recruiter/candidates");
+    return data;
+  },
+
+  listBookmarked: async (): Promise<ApiResponse<SavedCandidate[]>> => {
+    const { data } = await api.get<ApiResponse<SavedCandidate[]>>("/recruiter/candidates/bookmarked");
+    return data;
+  },
+
+  toggleBookmark: async (username: string, bookmarked: boolean): Promise<ApiResponse<SavedCandidate>> => {
+    const { data } = await api.put<ApiResponse<SavedCandidate>>(`/recruiter/candidates/${username}/bookmark`, { bookmarked });
+    return data;
+  },
+
+  addNote: async (username: string, content: string, title?: string): Promise<ApiResponse<RecruiterNote>> => {
+    const { data } = await api.post<ApiResponse<RecruiterNote>>(`/recruiter/candidates/${username}/notes`, { content, title });
+    return data;
+  },
+
+  getNotes: async (username: string): Promise<ApiResponse<RecruiterNote[]>> => {
+    const { data } = await api.get<ApiResponse<RecruiterNote[]>>(`/recruiter/candidates/${username}/notes`);
+    return data;
+  },
+
+  deleteNote: async (noteId: number): Promise<ApiResponse<void>> => {
+    const { data } = await api.delete<ApiResponse<void>>(`/recruiter/notes/${noteId}`);
+    return data;
+  },
+
+  getStats: async (): Promise<ApiResponse<RecruiterStats>> => {
+    const { data } = await api.get<ApiResponse<RecruiterStats>>("/recruiter/stats");
+    return data;
+  },
+};
+
+// ==================== Enhanced GitHub API ====================
+
+export const githubApiEnhanced = {
+  getOrganizations: async (username: string): Promise<ApiResponse<GitHubOrg[]>> => {
+    const { data } = await api.get<ApiResponse<GitHubOrg[]>>(`/github/${username}/organizations`);
+    return data;
+  },
+
+  getPullRequests: async (username: string): Promise<ApiResponse<GitHubPR[]>> => {
+    const { data } = await api.get<ApiResponse<GitHubPR[]>>(`/github/${username}/pull-requests`);
+    return data;
+  },
+
+  getIssues: async (username: string): Promise<ApiResponse<GitHubIssue[]>> => {
+    const { data } = await api.get<ApiResponse<GitHubIssue[]>>(`/github/${username}/issues`);
+    return data;
+  },
+
+  getCommits: async (username: string): Promise<ApiResponse<GitHubCommit[]>> => {
+    const { data } = await api.get<ApiResponse<GitHubCommit[]>>(`/github/${username}/commits`);
+    return data;
+  },
+
+  getLanguageBreakdown: async (username: string): Promise<ApiResponse<LanguageBreakdown[]>> => {
+    const { data } = await api.get<ApiResponse<LanguageBreakdown[]>>(`/github/${username}/languages`);
+    return data;
+  },
+
+  getContributionStats: async (username: string): Promise<ApiResponse<ContributionStats>> => {
+    const { data } = await api.get<ApiResponse<ContributionStats>>(`/github/${username}/contribution-stats`);
+    return data;
+  },
+
+  getFullInsights: async (username: string): Promise<ApiResponse<DeveloperScore>> => {
+    const { data } = await api.get<ApiResponse<DeveloperScore>>(`/github/${username}/insights`);
+    return data;
+  },
+};
+
+// ==================== Gemini AI API ====================
+
+export const aiApi = {
+  getStatus: async (): Promise<ApiResponse<{ enabled: boolean; provider: string; model: string }>> => {
+    const { data } = await api.get<ApiResponse<{ enabled: boolean; provider: string; model: string }>>("/ai/status");
+    return data;
+  },
+
+  getSummary: async (username: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/summary/${username}`);
+    return data;
+  },
+
+  getSkillAnalysis: async (username: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/skills/${username}`);
+    return data;
+  },
+
+  getCareerRoadmap: async (username: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/roadmap/${username}`);
+    return data;
+  },
+
+  getInterviewReadiness: async (username: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/interview/${username}`);
+    return data;
+  },
+
+  getRepositoryReview: async (username: string, repoName: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/review/${username}/${encodeURIComponent(repoName)}`);
+    return data;
+  },
+
+  getAComparison: async (user1: string, user2: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/compare/${user1}/${user2}`);
+    return data;
+  },
+
+  getEnhancedInsights: async (username: string): Promise<ApiResponse<{ score: DeveloperScore; aiInsight: string }>> => {
+    const { data } = await api.get<ApiResponse<{ score: DeveloperScore; aiInsight: string }>>(`/ai/insights/${username}`);
+    return data;
+  },
+};
+
+// ==================== Score History Types ====================
+
+export interface ScoreSnapshot {
+  id: number;
+  username: string;
+  displayName: string | null;
+  overallScore: number;
+  level: string;
+  contributionRecency: number;
+  commitFrequency: number;
+  repositoryHealth: number;
+  repositoryQuality: number;
+  contributionConsistency: number;
+  languageDiversity: number;
+  collaboration: number;
+  openSourceImpact: number;
+  popularity: number;
+  maintenance: number;
+  totalStars: number;
+  totalForks: number;
+  totalRepositories: number;
+  languageCount: number;
+  languages: string | null;
+  createdAt: string;
+}
+
+// ==================== Reports API ====================
+
+export const reportsApi = {
+  recordScore: async (username: string): Promise<ApiResponse<ScoreSnapshot>> => {
+    const { data } = await api.post<ApiResponse<ScoreSnapshot>>(`/reports/record/${username}`);
+    return data;
+  },
+
+  getHistory: async (username: string): Promise<ApiResponse<ScoreSnapshot[]>> => {
+    const { data } = await api.get<ApiResponse<ScoreSnapshot[]>>(`/reports/history/${username}`);
+    return data;
+  },
+
+  getLatest: async (username: string): Promise<ApiResponse<ScoreSnapshot>> => {
+    const { data } = await api.get<ApiResponse<ScoreSnapshot>>(`/reports/latest/${username}`);
+    return data;
+  },
+
+  getAllHistory: async (): Promise<ApiResponse<ScoreSnapshot[]>> => {
+    const { data } = await api.get<ApiResponse<ScoreSnapshot[]>>(`/reports/all`);
+    return data;
+  },
+
+  getStats: async (): Promise<ApiResponse<{ totalSnapshots: number; uniqueUsers: number; averageScore: number }>> => {
+    const { data } = await api.get<ApiResponse<{ totalSnapshots: number; uniqueUsers: number; averageScore: number }>>(`/reports/stats`);
+    return data;
+  },
+
+  generateReport: async (username: string): Promise<ApiResponse<{
+    score: DeveloperScore;
+    profile: GitHubProfile;
+    repos: Repository[];
+    history: ScoreSnapshot[];
+    recorded: ScoreSnapshot;
+  }>> => {
+    const { data } = await api.get<ApiResponse<{
+      score: DeveloperScore;
+      profile: GitHubProfile;
+      repos: Repository[];
+      history: ScoreSnapshot[];
+      recorded: ScoreSnapshot;
+    }>>(`/reports/generate/${username}`);
+    return data;
+  },
+};

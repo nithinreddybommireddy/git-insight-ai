@@ -8,38 +8,28 @@ import lombok.AllArgsConstructor;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "users")
+@Table(name = "recruiter_notes")
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
-public class User {
+public class RecruiterNote {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(unique = true, nullable = false)
-    private String email;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "recruiter_id", nullable = false)
+    private User recruiter;
 
     @Column(nullable = false)
-    private String password;
+    private String candidateUsername;
 
-    @Column(nullable = false)
-    private String name;
+    @Column(nullable = false, length = 5000)
+    private String content;
 
-    @Column(length = 512)
-    private String avatarUrl;
-
-    @Column(nullable = false)
-    @Enumerated(EnumType.STRING)
-    private Role role = Role.USER;
-
-    private Long githubId;
-
-    private String githubUsername;
-
-    @Column(nullable = false)
-    private boolean enabled = true;
+    @Column(length = 200)
+    private String title;
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -55,9 +45,5 @@ public class User {
     @PreUpdate
     protected void onUpdate() {
         updatedAt = LocalDateTime.now();
-    }
-
-    public enum Role {
-        USER, ADMIN, RECRUITER
     }
 }
