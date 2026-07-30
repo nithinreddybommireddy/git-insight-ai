@@ -1,11 +1,22 @@
 package com.gitinsight.githubservice.service.impl;
 
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
+import com.gitinsight.githubservice.dto.response.GitHubRepoApiResponse;
 import com.gitinsight.githubservice.dto.response.GitHubUserApiResponse;
+import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.GitHubService;
+import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
+import java.util.stream.Collectors;
 
 @Service
 public class GitHubServiceImpl implements GitHubService {
@@ -42,6 +53,134 @@ public class GitHubServiceImpl implements GitHubService {
         }
 
         return mapToProfileResponse(apiResponse);
+    }
+
+    @Override
+    public List<RepositoryResponse> getRepositories(String username) {
+        List<GitHubRepoApiResponse> apiRepos;
+
+        try {
+            apiRepos = restClient.get()
+                    .uri("/users/{username}/repos?sort=updated&per_page=100", username)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<GitHubRepoApiResponse>>() {});
+        } catch (HttpClientErrorException.NotFound e) {
+            throw new RuntimeException("GitHub user '" + username + "' not found.");
+        } catch (HttpClientErrorException.Forbidden e) {
+            throw new RuntimeException("GitHub API rate limit exceeded. Please try again later.");
+        }
+
+        if (apiRepos == null) {
+            return List.of();
+        }
+
+        return apiRepos.stream()
+                .map(this::mapToRepoResponse)
+                .sorted(Comparator.comparingInt(RepositoryResponse::getStars).reversed())
+                .collect(Collectors.toList());
+    }
+
+    private RepositoryResponse mapToRepoResponse(GitHubRepoApiResponse api) {
+        RepositoryResponse repo = new RepositoryResponse();
+
+        repo.setGithubId(api.getGithubId());
+        repo.setName(api.getName());
+        repo.setFullName(api.getFullName());
+        repo.setDescription(api.getDescription());
+        repo.setHtmlUrl(api.getHtmlUrl());
+        repo.setHomepage(api.getHomepage());
+        repo.setLanguage(api.getLanguage());
+        repo.setFork(api.isFork());
+        repo.setDefaultBranch(api.getDefaultBranch());
+        repo.setStars(api.getStargazersCount());
+        repo.setForks(api.getForksCount());
+        repo.setOpenIssues(api.getOpenIssuesCount());
+        repo.setWatchers(api.getWatchersCount());
+        repo.setSize(api.getSize());
+        repo.setTopics(api.getTopics() != null ? api.getTopics() : new String[0]);
+        repo.setHasLicense(api.getLicense() != null);
+        repo.setCreatedAt(api.getCreatedAt());
+        repo.setUpdatedAt(api.getUpdatedAt());
+        repo.setPushedAt(api.getPushedAt());
+        repo.setArchived(false);
+        repo.setDisabled(false);
+
+        // Calculate health scores
+        repo.setPopularityScore(calculatePopularityScore(api));
+        repo.setDocumentationScore(calculateDocumentationScore(api));
+        repo.setMaintenanceScore(calculateMaintenanceScore(api));
+        repo.setActivityScore(calculateActivityScore(api));
+        repo.setHealthScore(calculateOverallHealth(repo));
+
+        return repo;
+    }
+
+    private int calculatePopularityScore(GitHubRepoApiResponse api) {
+        int score = 0;
+        if (api.getStargazersCount() > 0) score += 25;
+        if (api.getStargazersCount() >= 10) score += 15;
+        if (api.getStargazersCount() >= 100) score += 15;
+        if (api.getForksCount() > 0) score += 15;
+        if (api.getForksCount() >= 5) score += 10;
+        if (api.getWatchersCount() > 0) score += 10;
+        if (api.getStargazersCount() >= 1000) score += 10;
+        return Math.min(score, 100);
+    }
+
+    private int calculateDocumentationScore(GitHubRepoApiResponse api) {
+        int score = 40; // Base score for having a repo
+        if (api.getTopics() != null && api.getTopics().length > 0) score += 15;
+        if (api.getLicense() != null) score += 15;
+        if (api.getDescription() != null && api.getDescription().length() > 10) score += 15;
+        if (api.getHomepage() != null && !api.getHomepage().isEmpty()) score += 15;
+        return Math.min(score, 100);
+    }
+
+    private int calculateMaintenanceScore(GitHubRepoApiResponse api) {
+        int score = 50;
+        try {
+            if (api.getPushedAt() != null) {
+                Instant pushed = ZonedDateTime.parse(api.getPushedAt()).toInstant();
+                long daysSincePush = Duration.between(pushed, Instant.now()).toDays();
+                if (daysSincePush < 7) score += 25;
+                else if (daysSincePush < 30) score += 15;
+                else if (daysSincePush < 90) score += 5;
+                else score -= 20;
+            }
+            if (api.getOpenIssuesCount() <= 3) score += 15;
+            else if (api.getOpenIssuesCount() <= 10) score += 10;
+            else if (api.getOpenIssuesCount() > 50) score -= 10;
+        } catch (Exception e) {
+            // If date parsing fails, keep base score
+        }
+        return Math.max(0, Math.min(score, 100));
+    }
+
+    private int calculateActivityScore(GitHubRepoApiResponse api) {
+        int score = 30;
+        if (api.getSize() > 100) score += 15;
+        if (api.getSize() > 1000) score += 5;
+        try {
+            if (api.getPushedAt() != null) {
+                Instant pushed = ZonedDateTime.parse(api.getPushedAt()).toInstant();
+                long monthsSincePush = Duration.between(pushed, Instant.now()).toDays() / 30;
+                if (monthsSincePush < 1) score += 25;
+                else if (monthsSincePush < 3) score += 15;
+                else if (monthsSincePush < 6) score += 10;
+            }
+        } catch (Exception e) {
+            // Keep base score
+        }
+        return Math.min(score, 100);
+    }
+
+    private int calculateOverallHealth(RepositoryResponse repo) {
+        return (int) Math.round(
+                repo.getPopularityScore() * 0.25 +
+                repo.getDocumentationScore() * 0.25 +
+                repo.getMaintenanceScore() * 0.30 +
+                repo.getActivityScore() * 0.20
+        );
     }
 
     private GitHubProfileResponse mapToProfileResponse(GitHubUserApiResponse api) {
