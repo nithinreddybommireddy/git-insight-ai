@@ -5,8 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { ProfileCard } from "@/components/ProfileCard";
+import { RepoList } from "@/components/RepoList";
+import { DeveloperScoreCard } from "@/components/DeveloperScore";
 import { Footer } from "@/components/Footer";
-import { githubApi, type GitHubProfile, type ApiResponse } from "@/services/api";
+import {
+  githubApi,
+  type GitHubProfile,
+  type Repository,
+  type DeveloperScore,
+  type ApiResponse,
+} from "@/services/api";
 import toast from "react-hot-toast";
 import {
   Search,
@@ -69,7 +77,10 @@ export function SearchResults() {
   const query = searchParams.get("q") || "";
   const [inputValue, setInputValue] = useState(query);
   const [profile, setProfile] = useState<GitHubProfile | null>(null);
+  const [repos, setRepos] = useState<Repository[]>([]);
+  const [score, setScore] = useState<DeveloperScore | null>(null);
   const [loading, setLoading] = useState(false);
+  const [reposLoading, setReposLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(getRecentSearches);
   const [tip] = useState(getRandomTip);
@@ -87,6 +98,21 @@ export function SearchResults() {
         setProfile(response.data);
         addRecentSearch(username);
         setRecentSearches(getRecentSearches);
+
+        // Fetch repos and score in parallel
+        setReposLoading(true);
+        Promise.allSettled([
+          githubApi.getRepositories(username),
+          githubApi.getDeveloperScore(username),
+        ]).then(([reposResult, scoreResult]) => {
+          if (reposResult.status === "fulfilled" && reposResult.value.success) {
+            setRepos(reposResult.value.data);
+          }
+          if (scoreResult.status === "fulfilled" && scoreResult.value.success) {
+            setScore(scoreResult.value.data);
+          }
+          setReposLoading(false);
+        });
       } else {
         setError(response.message);
       }
@@ -336,23 +362,32 @@ export function SearchResults() {
           {/* Profile Result */}
           {profile && <ProfileCard profile={profile} />}
 
-          {/* After-result CTA */}
-          {profile && (
+          {/* Developer Score */}
+          {score && (
+            <div className="mt-6">
+              <DeveloperScoreCard score={score} />
+            </div>
+          )}
+
+          {/* Repos Loading */}
+          {reposLoading && profile && (
             <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.8 }}
-              className="mt-8 text-center"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              className="mt-6"
             >
-              <Card className="!p-6 inline-block">
-                <div className="flex items-center gap-3 flex-wrap justify-center">
-                  <Sparkles className="w-5 h-5 text-primary" />
-                  <span className="text-sm text-muted-foreground">
-                    Want AI-powered insights? Developer scoring and portfolio reviews are coming soon!
-                  </span>
-                </div>
-              </Card>
+              <div className="text-center py-8">
+                <Loader2 className="w-6 h-6 text-primary animate-spin mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground">Analyzing repositories...</p>
+              </div>
             </motion.div>
+          )}
+
+          {/* Repository List */}
+          {repos.length > 0 && (
+            <div className="mt-6">
+              <RepoList repos={repos} />
+            </div>
           )}
         </div>
       </section>
