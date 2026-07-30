@@ -22,6 +22,7 @@
         <module>eureka-server</module>
         <module>github-service</module>
         <module>analytics-service</module>
+        <module>auth-service</module>
     </modules>
 
     <properties>
