@@ -7,14 +7,11 @@ import {
   Star,
   GitFork,
   AlertCircle,
-  Code2,
   BookOpen,
   ExternalLink,
   ChevronDown,
   ChevronUp,
-  Search,
   Shield,
-  Activity,
   FileText,
 } from "lucide-react";
 
@@ -28,13 +25,6 @@ function getScoreColor(score: number): string {
   if (score >= 60) return "from-cyan-500 to-blue-500";
   if (score >= 40) return "from-amber-500 to-yellow-500";
   return "from-red-500 to-rose-500";
-}
-
-function getScoreLabel(score: number): string {
-  if (score >= 80) return "Excellent";
-  if (score >= 60) return "Good";
-  if (score >= 40) return "Fair";
-  return "Needs Work";
 }
 
 function getLanguageColor(lang: string | null): string {

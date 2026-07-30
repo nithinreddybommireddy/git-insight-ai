@@ -10,18 +10,11 @@ import {
   Shield,
   Trophy,
   BookOpen,
+  BarChart3,
 } from "lucide-react";
 
 interface DeveloperScoreProps {
   score: Score;
-}
-
-function getScoreColor(score: number): string {
-  if (score >= 80) return "from-emerald-400 via-green-400 to-teal-400";
-  if (score >= 60) return "from-cyan-400 via-blue-400 to-indigo-400";
-  if (score >= 40) return "from-amber-400 via-yellow-400 to-orange-400";
-  if (score >= 20) return "from-red-400 via-rose-400 to-pink-400";
-  return "from-gray-400 to-slate-400";
 }
 
 function getLevelIcon(level: string) {
@@ -163,11 +156,40 @@ export function DeveloperScoreCard({ score }: DeveloperScoreProps) {
                 ))}
               </div>
 
-              {/* Sub-scores */}
-              <div className="space-y-2.5">
-                <ScoreBar label="Repository Health" value={score.avgHealthScore} color="from-violet-500 to-purple-500" />
-                <ScoreBar label="Popularity" value={score.avgPopularityScore} color="from-amber-500 to-orange-500" />
-                <ScoreBar label="Maintenance" value={score.avgMaintenanceScore} color="from-cyan-500 to-blue-500" />
+              {/* Repository Quality Scores */}
+              <div className="mb-2">
+                <div className="flex items-center gap-1.5 mb-2.5">
+                  <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Repository Quality</span>
+                </div>
+                <div className="space-y-2">
+                  <ScoreBar label="Health" value={score.avgHealthScore} color="from-violet-500 to-purple-500" />
+                  <ScoreBar label="Popularity" value={score.avgPopularityScore} color="from-amber-500 to-orange-500" />
+                  <ScoreBar label="Maintenance" value={score.avgMaintenanceScore} color="from-cyan-500 to-blue-500" />
+                </div>
+              </div>
+
+              {/* Contribution Activity Scores */}
+              <div className="mt-4 pt-4 border-t border-border">
+                <div className="flex items-center gap-1.5 mb-2.5">
+                  <TrendingUp className="w-3.5 h-3.5 text-muted-foreground" />
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Contribution Activity</span>
+                </div>
+                <div className="space-y-2">
+                  <ScoreBar label="Recency" value={score.contributionRecencyScore} color="from-emerald-500 to-teal-500" />
+                  <ScoreBar label="Commit Freq." value={score.commitFrequencyScore} color="from-blue-500 to-indigo-500" />
+                  <ScoreBar label="Consistency" value={score.consistencyScore} color="from-orange-500 to-rose-500" />
+                </div>
+              </div>
+
+              {/* Weight breakdown hint */}
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <div className="flex items-center gap-1.5">
+                  <BarChart3 className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-[10px] text-muted-foreground">
+                    Scoring weights: 20% Recency · 20% Commit Freq. · 15% Health · 10% Each (Consistency, Languages, Maintenance, Stars) · 5% Popularity
+                  </span>
+                </div>
               </div>
 
               {/* Languages */}

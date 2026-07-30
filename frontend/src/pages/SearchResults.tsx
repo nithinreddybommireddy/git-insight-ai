@@ -24,7 +24,6 @@ import {
   Clock,
   RefreshCw,
   TrendingUp,
-  Sparkles,
   Lightbulb,
   ArrowRight,
   X,
@@ -84,7 +83,6 @@ export function SearchResults() {
   const [error, setError] = useState<string | null>(null);
   const [recentSearches, setRecentSearches] = useState<string[]>(getRecentSearches);
   const [tip] = useState(getRandomTip);
-  const [showClear, setShowClear] = useState(false);
 
   const fetchProfile = useCallback(async (username: string) => {
     if (!username.trim()) return;
