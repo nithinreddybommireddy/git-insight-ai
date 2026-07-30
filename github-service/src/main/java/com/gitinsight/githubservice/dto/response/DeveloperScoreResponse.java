@@ -15,6 +15,12 @@ public class DeveloperScoreResponse {
     private int avgHealthScore;
     private int avgPopularityScore;
     private int avgMaintenanceScore;
+
+    // New contribution-focused metrics
+    private int contributionRecencyScore;
+    private int commitFrequencyScore;
+    private int consistencyScore;
+
     private String level;
 
     public static DeveloperScoreResponse empty(String username) {
@@ -29,6 +35,9 @@ public class DeveloperScoreResponse {
         score.setAvgHealthScore(0);
         score.setAvgPopularityScore(0);
         score.setAvgMaintenanceScore(0);
+        score.setContributionRecencyScore(0);
+        score.setCommitFrequencyScore(0);
+        score.setConsistencyScore(0);
         score.setLevel("N/A");
         return score;
     }

@@ -5,15 +5,16 @@ import com.gitinsight.githubservice.dto.response.GitHubRepoApiResponse;
 import com.gitinsight.githubservice.dto.response.GitHubUserApiResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.GitHubService;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -25,12 +26,17 @@ public class GitHubServiceImpl implements GitHubService {
 
     private final RestClient restClient;
 
-    public GitHubServiceImpl() {
-        this.restClient = RestClient.builder()
+    public GitHubServiceImpl(@Value("${github.token:}") String githubToken) {
+        RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
-                .defaultHeader("User-Agent", "GitInsight-AI/1.0")
-                .build();
+                .defaultHeader("User-Agent", "GitInsight-AI/1.0");
+
+        if (StringUtils.hasText(githubToken)) {
+            builder.defaultHeader("Authorization", "Bearer " + githubToken);
+        }
+
+        this.restClient = builder.build();
     }
 
     @Override
