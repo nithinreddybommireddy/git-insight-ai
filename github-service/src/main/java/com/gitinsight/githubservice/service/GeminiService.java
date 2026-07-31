@@ -50,29 +50,18 @@ public class GeminiService {
     private final String apiKey;
     private final boolean enabled;
 
-//    public GeminiService(
-//            @Value("${gemini.api.key:}") String apiKey
-//    ) {
-//        this.apiKey = apiKey;
-//        this.enabled = StringUtils.hasText(apiKey);
-//        this.restClient = RestClient.builder()
-//                .defaultHeader("Content-Type", "application/json")
-//                .build();
-//        if (enabled) {
-//            log.info("Gemini AI service initialized with API key");
-//        } else {
-//            log.info("Gemini AI service running in fallback mode (no API key configured). Set GEMINI_API_KEY env var for AI-powered insights.");
-//        }
-//    }
     public GeminiService(@Value("${gemini.api.key:}") String apiKey) {
-        System.out.println("Enabled = " + StringUtils.hasText(apiKey));
-
         this.apiKey = apiKey;
         this.enabled = StringUtils.hasText(apiKey);
 
         this.restClient = RestClient.builder()
                 .defaultHeader("Content-Type", "application/json")
                 .build();
+        if (enabled) {
+            log.info("Gemini AI service initialized with API key");
+        } else {
+            log.info("Gemini AI service running in fallback mode (no API key configured). Set GEMINI_API_KEY env var for AI-powered insights.");
+        }
     }
     // ═══════════════════════════════════════════════════════════════
     // PUBLIC METHODS
@@ -219,13 +208,7 @@ public class GeminiService {
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            System.out.println("========== GEMINI RESPONSE ==========");
-            System.out.println(response);
-            System.out.println("=====================================");
-
-            String text = extractText(response);
-            System.out.println("Extracted Text: " + text);
-            return text;
+            return extractText(response);
 
         } catch (Exception e) {
             log.error("Gemini API call failed", e);
