@@ -46,7 +46,7 @@ public class GeminiController {
         return new ApiResponse<>(true, "AI service status",
                 Map.of("enabled", geminiService.isEnabled(),
                        "provider", "Google Gemini",
-                       "model", "gemini-2.0-flash"));
+                       "model", "gemini-3.1-flash-lite"));
     }
 
     /**
