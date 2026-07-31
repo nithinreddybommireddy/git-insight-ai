@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  Search,
   Code2,
   Menu,
   X,
@@ -161,15 +160,6 @@ export function Navbar() {
               </div>
             )}
 
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => navigate("/search")}
-              className="gap-2 ml-2"
-            >
-              <Search className="w-4 h-4" />
-              Search
-            </Button>
           </div>
 
           {/* Mobile: Theme + GitHub + Menu */}
@@ -203,7 +193,7 @@ export function Navbar() {
       {/* Mobile Menu */}
       <div
         className={cn(
-          "md:hidden glass-strong border-t border-border overflow-hidden transition-all duration-400 ease-in-out",
+          "md:hidden glass-strong border-t border-border overflow-hidden transition-all duration-300 ease-in-out",
           mobileOpen ? "max-h-96" : "max-h-0"
         )}
       >

@@ -9,7 +9,6 @@ import { RepoList } from "@/components/RepoList";
 import { DeveloperScoreCard } from "@/components/DeveloperScore";
 import { StackContributors } from "@/components/StackContributors";
 import { CommitQualityPanel } from "@/components/CommitQualityPanel";
-import { Footer } from "@/components/Footer";
 import {
   githubApi,
   githubApiEnhanced,
@@ -433,7 +432,6 @@ export function SearchResults() {
         </div>
       </section>
 
-      <Footer />
     </div>
   );
 }

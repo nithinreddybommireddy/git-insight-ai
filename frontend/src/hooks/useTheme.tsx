@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 
 type Theme = "dark" | "light";
 
@@ -21,6 +21,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return "dark";
   });
 
+  // Tracks the temporary transition window so rapid toggles don't cut it short.
+  const transitionTimeout = useRef<number | null>(null);
+
   useEffect(() => {
     const root = document.documentElement;
     root.classList.remove("dark", "light");
@@ -28,7 +31,28 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     localStorage.setItem("gitinsight-theme", theme);
   }, [theme]);
 
+  useEffect(() => {
+    return () => {
+      if (transitionTimeout.current !== null) {
+        window.clearTimeout(transitionTimeout.current);
+      }
+    };
+  }, []);
+
   const toggleTheme = () => {
+    const root = document.documentElement;
+
+    // Enable the cross-fade only for the duration of the switch, then remove it
+    // so everyday transitions (and performance) stay untouched.
+    root.classList.add("theme-transition");
+    if (transitionTimeout.current !== null) {
+      window.clearTimeout(transitionTimeout.current);
+    }
+    transitionTimeout.current = window.setTimeout(() => {
+      root.classList.remove("theme-transition");
+      transitionTimeout.current = null;
+    }, 500);
+
     setTheme((prev) => (prev === "dark" ? "light" : "dark"));
   };
 

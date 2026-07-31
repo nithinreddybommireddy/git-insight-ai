@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
-import { Footer } from "@/components/Footer";
 import { useAuth } from "@/hooks/useAuth";
 import toast from "react-hot-toast";
 import {
@@ -195,7 +194,6 @@ export function Register() {
           </Card>
         </motion.div>
       </div>
-      <Footer />
     </div>
   );
 }

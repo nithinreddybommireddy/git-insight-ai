@@ -70,7 +70,8 @@ public class JobMatcherService {
 
     private final RestClient githubClient;
 
-    public JobMatcherService(@Autowired @Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl) {
+    @Autowired
+    public JobMatcherService(@Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl) {
         this(buildClient(githubServiceUrl));
     }
 

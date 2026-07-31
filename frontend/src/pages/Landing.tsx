@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
-import { Footer } from "@/components/Footer";
 import {
   Search,
   BarChart3,
@@ -322,7 +321,6 @@ export function Landing() {
         </div>
       </section>
 
-      <Footer />
     </div>
   );
 }

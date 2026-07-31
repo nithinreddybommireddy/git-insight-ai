@@ -14,11 +14,12 @@ if [ ! -f eureka-server/target/eureka-server-*.jar ]; then
   sh ./mvnw clean package -DskipTests -q
 fi
 
-# Start all 3 backend services in background
+# Start all 4 backend services in background
 echo "Starting backend services..."
 setsid java -jar eureka-server/target/eureka-server-*.jar > /tmp/eureka.log 2>&1 &
 setsid java -jar analytics-service/target/analytics-service-*.jar > /tmp/analytics.log 2>&1 &
 setsid java -jar github-service/target/github-service-*.jar > /tmp/github.log 2>&1 &
+setsid java -jar auth-service/target/auth-service-*.jar > /tmp/auth.log 2>&1 &
 echo "Backend services starting in background (will take ~25s to be ready)"
 
 # Start frontend dev server in foreground

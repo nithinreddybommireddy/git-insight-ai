@@ -1,9 +1,12 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
 import { ThemeProvider } from "@/hooks/useTheme";
 import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import { Navbar } from "@/components/Navbar";
+import { Footer } from "@/components/Footer";
 import { Landing } from "@/pages/Landing";
 import { SearchResults } from "@/pages/SearchResults";
 import { ComparePage } from "@/pages/ComparePage";
@@ -14,7 +17,6 @@ import { RecruiterDashboard } from "@/pages/RecruiterDashboard";
 import { CandidateDetails } from "@/pages/CandidateDetails";
 import { AIAnalysis } from "@/pages/AIAnalysis";
 import { ReportsPage } from "@/pages/ReportsPage";
-import type { ReactNode } from "react";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,51 +46,77 @@ function RequireAuth({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function ScrollToTop() {
+  const { pathname } = useLocation();
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+  }, [pathname]);
+
+  return null;
+}
+
 function AppRoutes() {
+  const location = useLocation();
+
   return (
     <>
+      <ScrollToTop />
       <Navbar />
-      <Routes>
-        <Route path="/" element={<Landing />} />
-        <Route path="/search" element={<SearchResults />} />
-        <Route path="/compare" element={<ComparePage />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
-        <Route
-          path="/dashboard"
-          element={
-            <RequireAuth>
-              <Dashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/recruiter"
-          element={
-            <RequireAuth>
-              <RecruiterDashboard />
-            </RequireAuth>
-          }
-        />
-        <Route
-          path="/recruiter/candidate/:username"
-          element={
-            <RequireAuth>
-              <CandidateDetails />
-            </RequireAuth>
-          }
-        />
-        <Route path="/ai" element={<AIAnalysis />} />
-        <Route
-          path="/reports"
-          element={
-            <RequireAuth>
-              <ReportsPage />
-            </RequireAuth>
-          }
-        />
-        <Route path="/reports/:username" element={<ReportsPage />} />
-      </Routes>
+      <main className="flex-1 w-full">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={location.pathname}
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.22, ease: "easeOut" }}
+          >
+            <Routes location={location}>
+          <Route path="/" element={<Landing />} />
+          <Route path="/search" element={<SearchResults />} />
+          <Route path="/compare" element={<ComparePage />} />
+          <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
+          <Route
+            path="/dashboard"
+            element={
+              <RequireAuth>
+                <Dashboard />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/recruiter"
+            element={
+              <RequireAuth>
+                <RecruiterDashboard />
+              </RequireAuth>
+            }
+          />
+          <Route
+            path="/recruiter/candidate/:username"
+            element={
+              <RequireAuth>
+                <CandidateDetails />
+              </RequireAuth>
+            }
+          />
+          <Route path="/ai" element={<AIAnalysis />} />
+          <Route
+            path="/reports"
+            element={
+              <RequireAuth>
+                <ReportsPage />
+              </RequireAuth>
+            }
+          />
+          <Route path="/reports/:username" element={<ReportsPage />} />
+            </Routes>
+          </motion.div>
+        </AnimatePresence>
+      </main>
+      <Footer />
     </>
   );
 }
@@ -99,7 +127,7 @@ function App() {
       <ThemeProvider>
         <AuthProvider>
           <BrowserRouter>
-            <div className="min-h-screen bg-background text-foreground antialiased transition-colors duration-300">
+            <div className="min-h-screen flex flex-col bg-background text-foreground antialiased transition-colors duration-300">
               <AppRoutes />
             </div>
             <Toaster

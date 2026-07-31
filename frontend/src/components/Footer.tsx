@@ -1,18 +1,171 @@
-import { Code2, Heart } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  Code2,
+  Heart,
+  ExternalLink,
+  Star,
+  ArrowRight,
+  Search,
+  Brain,
+  BarChart3,
+  Users,
+  LayoutDashboard,
+  LogIn,
+  FileText,
+  GitCompareArrows,
+} from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
+
+const productLinks = [
+  { label: "Home", to: "/" },
+  { label: "Search Profiles", to: "/search", icon: Search },
+  { label: "Compare Developers", to: "/compare", icon: GitCompareArrows },
+  { label: "AI Analysis", to: "/ai", icon: Brain },
+  { label: "Reports & Score History", to: "/reports", icon: BarChart3 },
+];
+
+const resourceLinks = [
+  { label: "GitHub Repository", href: "https://github.com/nithinreddybommireddy/git-insight-ai", icon: ExternalLink },
+  { label: "Documentation", href: "https://github.com/nithinreddybommireddy/git-insight-ai/blob/main/README.md", icon: FileText },
+];
 
 export function Footer() {
+  const { isAuthenticated } = useAuth();
+
+  const accountLinks = isAuthenticated
+    ? [
+        { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
+        { label: "Recruiter Hub", to: "/recruiter", icon: Users },
+      ]
+    : [
+        { label: "Sign In", to: "/login", icon: LogIn },
+        { label: "Create Account", to: "/register", icon: Users },
+      ];
+
   return (
-    <footer className="border-t border-border bg-background/50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Code2 className="w-4 h-4" />
-            <span>GitInsight AI</span>
-            <span className="hidden sm:inline">&bull;</span>
-            <span className="hidden sm:inline">
-              AI-Powered GitHub Analytics
-            </span>
+    <footer className="border-t border-border bg-background/50 mt-16">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-10">
+          {/* Brand */}
+          <div className="lg:col-span-1 space-y-4">
+            <Link to="/" className="flex items-center gap-2.5 group w-fit">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30">
+                <Code2 className="w-5 h-5 text-white" />
+              </div>
+              <span className="text-lg font-bold">
+                <span className="gradient-text">GitInsight</span>
+                <span className="text-foreground"> AI</span>
+              </span>
+            </Link>
+            <p className="text-sm text-muted-foreground leading-relaxed max-w-xs">
+              Data-driven developer scoring, commit &amp; code-quality analysis,
+              and AI-powered insights — straight from real GitHub activity.
+            </p>
+            <a
+              href="https://github.com/nithinreddybommireddy/git-insight-ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <Star className="w-4 h-4" />
+              Star on GitHub
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
           </div>
+
+          {/* Product */}
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground mb-4">
+              Product
+            </h3>
+            <ul className="space-y-3">
+              {productLinks.map(({ label, to, icon: Icon }) => (
+                <li key={to}>
+                  <Link
+                    to={to}
+                    className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                  >
+                    {Icon && <Icon className="w-4 h-4 opacity-70 group-hover:opacity-100" />}
+                    {label}
+                    <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {/* Account */}
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground mb-4">
+              Account
+            </h3>
+            <ul className="space-y-3">
+              {accountLinks.map(({ label, to, icon: Icon }) => (
+                <li key={to}>
+                  <Link
+                    to={to}
+                    className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                  >
+                    {Icon && <Icon className="w-4 h-4 opacity-70 group-hover:opacity-100" />}
+                    {label}
+                    <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
+                  </Link>
+                </li>
+              ))}
+              {isAuthenticated && (
+                <li>
+                  <Link
+                    to="/search"
+                    className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                  >
+                    <Search className="w-4 h-4 opacity-70 group-hover:opacity-100" />
+                    Find Developers
+                    <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
+                  </Link>
+                </li>
+              )}
+            </ul>
+          </div>
+
+          {/* Resources */}
+          <div>
+            <h3 className="text-sm font-semibold uppercase tracking-wider text-foreground mb-4">
+              Resources
+            </h3>
+            <ul className="space-y-3">
+              {resourceLinks.map(({ label, href, icon: Icon }) => (
+                <li key={href}>
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                  >
+                    {Icon && <Icon className="w-4 h-4 opacity-70 group-hover:opacity-100" />}
+                    {label}
+                    <ExternalLink className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
+                  </a>
+                </li>
+              ))}
+              <li>
+                <Link
+                  to="/ai"
+                  className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  <Brain className="w-4 h-4 opacity-70 group-hover:opacity-100" />
+                  Try AI Insights
+                  <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
+                </Link>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        {/* Bottom bar */}
+        <div className="mt-12 pt-6 border-t border-border flex flex-col md:flex-row items-center justify-between gap-4">
+          <p className="text-sm text-muted-foreground">
+            © {new Date().getFullYear()} GitInsight AI. All rights reserved.
+          </p>
           <p className="text-sm text-muted-foreground flex items-center gap-1">
             Made with <Heart className="w-3.5 h-3.5 text-red-500 fill-red-500" /> by
             Nithin Reddy

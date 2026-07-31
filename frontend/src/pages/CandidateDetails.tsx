@@ -3,7 +3,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Footer } from "@/components/Footer";
 import { AISummaryPanel } from "@/components/AISummaryPanel";
 import { SkillsMatrix } from "@/components/SkillsMatrix";
 import { ReportExport } from "@/components/ReportExport";
@@ -639,7 +638,6 @@ export function CandidateDetails() {
           </motion.div>
         )}
       </div>
-      <Footer />
     </div>
   );
 }

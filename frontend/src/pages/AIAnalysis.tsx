@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Footer } from "@/components/Footer";
 import { aiApi } from "@/services/api";
 import toast from "react-hot-toast";
 import {
@@ -438,7 +437,6 @@ export function AIAnalysis() {
           </motion.div>
         )}
       </div>
-      <Footer />
     </div>
   );
 }
