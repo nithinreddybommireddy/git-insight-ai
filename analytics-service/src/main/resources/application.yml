@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/gitinsight_analytics
     username: postgres
-    password: postgres
+    password: 12345678
 
   jpa:
     hibernate:
