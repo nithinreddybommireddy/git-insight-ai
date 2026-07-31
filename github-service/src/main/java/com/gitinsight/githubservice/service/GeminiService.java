@@ -32,28 +32,39 @@ import java.util.stream.Collectors;
 public class GeminiService {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiService.class);
-    private static final String GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    private static final String GEMINI_API_URL =
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
     private static final int MAX_OUTPUT_TOKENS = 800;
 
     private final RestClient restClient;
     private final String apiKey;
     private final boolean enabled;
 
-    public GeminiService(
-            @Value("${gemini.api.key:}") String apiKey
-    ) {
+//    public GeminiService(
+//            @Value("${gemini.api.key:}") String apiKey
+//    ) {
+//        this.apiKey = apiKey;
+//        this.enabled = StringUtils.hasText(apiKey);
+//        this.restClient = RestClient.builder()
+//                .defaultHeader("Content-Type", "application/json")
+//                .build();
+//        if (enabled) {
+//            log.info("Gemini AI service initialized with API key");
+//        } else {
+//            log.info("Gemini AI service running in fallback mode (no API key configured). Set GEMINI_API_KEY env var for AI-powered insights.");
+//        }
+//    }
+    public GeminiService(@Value("${gemini.api.key:}") String apiKey) {
+        System.out.println("API Key = " + apiKey);
+        System.out.println("Enabled = " + StringUtils.hasText(apiKey));
+
         this.apiKey = apiKey;
         this.enabled = StringUtils.hasText(apiKey);
+
         this.restClient = RestClient.builder()
                 .defaultHeader("Content-Type", "application/json")
                 .build();
-        if (enabled) {
-            log.info("Gemini AI service initialized with API key");
-        } else {
-            log.info("Gemini AI service running in fallback mode (no API key configured). Set GEMINI_API_KEY env var for AI-powered insights.");
-        }
     }
-
     // ═══════════════════════════════════════════════════════════════
     // PUBLIC METHODS
     // ═══════════════════════════════════════════════════════════════
@@ -162,10 +173,16 @@ public class GeminiService {
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
 
-            return extractText(response);
+            System.out.println("========== GEMINI RESPONSE ==========");
+            System.out.println(response);
+            System.out.println("=====================================");
+
+            String text = extractText(response);
+            System.out.println("Extracted Text: " + text);
+            return text;
 
         } catch (Exception e) {
-            log.warn("Gemini API call failed for {}: {}", taskName, e.getMessage());
+            log.error("Gemini API call failed", e);
             return getFallbackResponse(taskName);
         }
     }
