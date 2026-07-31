@@ -5,11 +5,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -40,6 +43,30 @@ public class GitHubIntegrationService {
                                      int reposContributedTo, int orgCount) {}
 
     public record LanguageBreakdown(String language, double percentage, int repos) {}
+
+    public record GitHubEvent(String type, String createdAt, String repoName, String actor) {}
+
+    public record GitHubContributor(String login, int contributions, String avatarUrl) {}
+
+    /**
+     * Enriched scoring inputs fetched together: byte-weighted languages and aggregate contributors.
+     * Either list may be empty when the underlying API calls fail (graceful fallback in ScoringEngine).
+     */
+    public record EnrichedScoreData(
+            List<LanguageBreakdown> weightedLanguages,
+            List<GitHubContributor> contributors
+    ) {}
+
+    public record RateLimitResource(int limit, int used, int remaining, long resetEpoch, String resetDate) {}
+
+    public record RateLimitStatus(
+            boolean authenticated,
+            String hint,
+            Map<String, String> headers,
+            RateLimitResource core,
+            RateLimitResource search,
+            RateLimitResource graphql
+    ) {}
 
     public GitHubIntegrationService(
             @Value("${github.token:}") String githubToken,
@@ -293,5 +320,369 @@ public class GitHubIntegrationService {
                         Math.round((e.getValue() * 100.0 / total) * 10.0) / 10.0,
                         e.getValue()))
                 .collect(Collectors.toList());
+    }
+
+    // ── User Events (own activity) ──
+
+    public List<GitHubEvent> getUserEvents(String username) {
+        String cacheKey = "events:" + username;
+        List<GitHubEvent> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            List<Map<String, Object>> events = restClient.get()
+                    .uri("/users/{username}/events?per_page=100", username)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+            if (events == null) return List.of();
+
+            List<GitHubEvent> result = events.stream()
+                    .map(this::toGitHubEvent)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            cacheService.put(cacheKey, result, Duration.ofMinutes(10));
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to fetch events for {}: {}", username, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ── Received Events (activity on the user from others) ──
+
+    public List<GitHubEvent> getReceivedEvents(String username) {
+        String cacheKey = "events-recv:" + username;
+        List<GitHubEvent> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            List<Map<String, Object>> events = restClient.get()
+                    .uri("/users/{username}/received_events?per_page=100", username)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+            if (events == null) return List.of();
+
+            List<GitHubEvent> result = events.stream()
+                    .map(this::toGitHubEvent)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            cacheService.put(cacheKey, result, Duration.ofMinutes(10));
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to fetch received events for {}: {}", username, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private GitHubEvent toGitHubEvent(Map<String, Object> e) {
+        try {
+            String type = (String) e.get("type");
+            String createdAt = (String) e.get("created_at");
+            String actor = "";
+            Object actorObj = e.get("actor");
+            if (actorObj instanceof Map<?, ?> actorMap && actorMap.get("login") != null) {
+                actor = (String) actorMap.get("login");
+            }
+            String repoName = "";
+            Object repoObj = e.get("repo");
+            if (repoObj instanceof Map<?, ?> repoMap && repoMap.get("name") != null) {
+                repoName = (String) repoMap.get("name");
+            }
+            return new GitHubEvent(type, createdAt, repoName, actor);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    // ── Per-repo Languages (byte-weighted) ──
+
+    public Map<String, Long> getRepositoryLanguages(String owner, String repo) {
+        String cacheKey = "langs:" + owner + "/" + repo;
+        Map<String, Long> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            Map<String, Long> langs = restClient.get()
+                    .uri("/repos/{owner}/{repo}/languages", owner, repo)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<Map<String, Long>>() {});
+            if (langs == null) return Map.of();
+
+            cacheService.put(cacheKey, langs, Duration.ofHours(1));
+            return langs;
+        } catch (Exception e) {
+            log.warn("Failed to fetch languages for {}/{}: {}", owner, repo, e.getMessage());
+            return Map.of();
+        }
+    }
+
+    // ── Byte-weighted language breakdown across the user's repos ──
+
+    public List<LanguageBreakdown> getWeightedLanguageBreakdown(List<RepositoryResponse> repos) {
+        Map<String, Long> byteTotals = new HashMap<>();
+        Map<String, Integer> repoCounts = new HashMap<>();
+        int checked = 0;
+
+        for (RepositoryResponse r : repos) {
+            if (r.isFork() || r.isArchived()) continue;
+            if (checked >= 15) break; // cap API calls per request
+            checked++;
+
+            String fullName = r.getFullName();
+            if (fullName == null || !fullName.contains("/")) continue;
+            String[] parts = fullName.split("/", 2);
+            Map<String, Long> langs = getRepositoryLanguages(parts[0], parts[1]);
+            langs.forEach((lang, bytes) -> {
+                byteTotals.merge(lang, bytes, Long::sum);
+                repoCounts.merge(lang, 1, Integer::sum);
+            });
+        }
+
+        if (byteTotals.isEmpty()) {
+            return getLanguageBreakdown(repos); // graceful fallback to repo-count
+        }
+
+        long total = byteTotals.values().stream().mapToLong(Long::longValue).sum();
+        if (total == 0) return getLanguageBreakdown(repos);
+
+        return byteTotals.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .map(e -> new LanguageBreakdown(
+                        e.getKey(),
+                        Math.round((e.getValue() * 100.0 / total) * 10.0) / 10.0,
+                        repoCounts.getOrDefault(e.getKey(), 0)))
+                .collect(Collectors.toList());
+    }
+
+    // ── Per-repo Contributors ──
+
+    public List<GitHubContributor> getContributors(String owner, String repo) {
+        String cacheKey = "contrib:" + owner + "/" + repo;
+        List<GitHubContributor> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            List<Map<String, Object>> contributors = restClient.get()
+                    .uri("/repos/{owner}/{repo}/contributors?per_page=20", owner, repo)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+            if (contributors == null) return List.of();
+
+            List<GitHubContributor> result = contributors.stream()
+                    .map(c -> {
+                        try {
+                            Number contribs = (Number) c.get("contributions");
+                            String login = (String) c.get("login");
+                            String avatar = (String) c.get("avatar_url");
+                            return new GitHubContributor(login, contribs != null ? contribs.intValue() : 0, avatar);
+                        } catch (Exception ex) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            cacheService.put(cacheKey, result, Duration.ofHours(1));
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to fetch contributors for {}/{}: {}", owner, repo, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ── Aggregate contributors across the user's repos ──
+
+    public List<GitHubContributor> getAggregateContributors(List<RepositoryResponse> repos) {
+        Map<String, int[]> totals = new HashMap<>(); // login -> [contributions, repoCount]
+        int checked = 0;
+
+        for (RepositoryResponse r : repos) {
+            if (r.isFork() || r.isArchived()) continue;
+            if (checked >= 10) break; // cap API calls per request
+            checked++;
+
+            String fullName = r.getFullName();
+            if (fullName == null || !fullName.contains("/")) continue;
+            String[] parts = fullName.split("/", 2);
+            for (GitHubContributor c : getContributors(parts[0], parts[1])) {
+                if (c.login() == null) continue;
+                int[] agg = totals.computeIfAbsent(c.login(), k -> new int[2]);
+                agg[0] += c.contributions();
+                agg[1] += 1;
+            }
+        }
+
+        return totals.entrySet().stream()
+                .sorted((a, b) -> Integer.compare(b.getValue()[0], a.getValue()[0]))
+                .limit(20)
+                .map(e -> new GitHubContributor(e.getKey(), e.getValue()[0], null))
+                .collect(Collectors.toList());
+    }
+
+    // ── Per-repo Pull Requests & Issues (core API, not search API) ──
+
+    public List<GitHubPR> getRepositoryPullRequests(String owner, String repo) {
+        String cacheKey = "repo-prs:" + owner + "/" + repo;
+        List<GitHubPR> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            List<Map<String, Object>> prs = restClient.get()
+                    .uri("/repos/{owner}/{repo}/pulls?state=all&per_page=30", owner, repo)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+            if (prs == null) return List.of();
+
+            List<GitHubPR> result = prs.stream()
+                    .map(item -> {
+                        try {
+                            Number num = (Number) item.get("number");
+                            Number comments = (Number) item.getOrDefault("comments", 0);
+                            return new GitHubPR(
+                                    num != null ? num.intValue() : 0,
+                                    (String) item.get("title"),
+                                    (String) item.get("state"),
+                                    (String) item.get("created_at"),
+                                    (String) item.get("merged_at"),
+                                    owner + "/" + repo,
+                                    comments != null ? comments.intValue() : 0
+                            );
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            cacheService.put(cacheKey, result, Duration.ofMinutes(10));
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to fetch pulls for {}/{}: {}", owner, repo, e.getMessage());
+            return List.of();
+        }
+    }
+
+    // ── Enriched score inputs (weighted languages + contributors in one call) ──
+
+    public EnrichedScoreData getEnrichedScoreData(List<RepositoryResponse> repos) {
+        return new EnrichedScoreData(
+                getWeightedLanguageBreakdown(repos),
+                getAggregateContributors(repos));
+    }
+
+    // ── Rate Limit Status (from x-ratelimit headers + /rate_limit body) ──
+
+    public RateLimitStatus getRateLimit() {
+        try {
+            ResponseEntity<Map<String, Object>> response = restClient.get()
+                    .uri("/rate_limit")
+                    .retrieve()
+                    .toEntity(new ParameterizedTypeReference<Map<String, Object>>() {});
+
+            // Raw x-ratelimit-* headers from the response
+            Map<String, String> headerMap = new LinkedHashMap<>();
+            HttpHeaders headers = response.getHeaders();
+            for (String name : List.of("X-RateLimit-Limit", "X-RateLimit-Remaining",
+                    "X-RateLimit-Used", "X-RateLimit-Reset", "X-RateLimit-Resource")) {
+                String value = headers.getFirst(name);
+                if (value != null) headerMap.put(name, value);
+            }
+
+            // Structured per-resource breakdown from the JSON body
+            Map<String, Object> body = response.getBody();
+            Map<String, Object> resources = body != null && body.get("resources") instanceof Map<?, ?> m
+                    ? toMap(m) : Map.of();
+
+            RateLimitResource core = parseResource(resources.get("core"));
+            RateLimitResource search = parseResource(resources.get("search"));
+            RateLimitResource graphql = parseResource(resources.get("graphql"));
+
+            boolean authenticated = core.limit() >= 1000;
+            String hint = authenticated
+                    ? "Authenticated with GITHUB_TOKEN — 5,000 requests/hour."
+                    : "Unauthenticated — only 60 requests/hour. Set GITHUB_TOKEN to raise the limit to 5,000.";
+
+            return new RateLimitStatus(authenticated, hint, headerMap, core, search, graphql);
+        } catch (Exception e) {
+            log.warn("Failed to fetch rate limit status: {}", e.getMessage());
+            RateLimitResource empty = new RateLimitResource(0, 0, 0, 0, "");
+            return new RateLimitStatus(false,
+                    "Could not fetch rate limit status: " + e.getMessage(),
+                    Map.of(), empty, empty, empty);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> toMap(Map<?, ?> m) {
+        return (Map<String, Object>) m;
+    }
+
+    private RateLimitResource parseResource(Object o) {
+        if (!(o instanceof Map<?, ?> m)) return new RateLimitResource(0, 0, 0, 0, "");
+        Number limit = num(m.get("limit"));
+        Number used = num(m.get("used"));
+        Number remaining = num(m.get("remaining"));
+        Number reset = num(m.get("reset"));
+        long resetEpoch = reset != null ? reset.longValue() : 0;
+        String resetDate = resetEpoch > 0 ? Instant.ofEpochSecond(resetEpoch).toString() : "";
+        return new RateLimitResource(
+                limit != null ? limit.intValue() : 0,
+                used != null ? used.intValue() : 0,
+                remaining != null ? remaining.intValue() : 0,
+                resetEpoch,
+                resetDate);
+    }
+
+    private Number num(Object o) {
+        return o instanceof Number n ? n : null;
+    }
+
+    public List<GitHubIssue> getRepositoryIssues(String owner, String repo) {
+        String cacheKey = "repo-issues:" + owner + "/" + repo;
+        List<GitHubIssue> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        try {
+            List<Map<String, Object>> issues = restClient.get()
+                    .uri("/repos/{owner}/{repo}/issues?state=all&per_page=30", owner, repo)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+            if (issues == null) return List.of();
+
+            List<GitHubIssue> result = issues.stream()
+                    .filter(item -> !Boolean.TRUE.equals(item.get("pull_request")))
+                    .map(item -> {
+                        try {
+                            @SuppressWarnings("unchecked")
+                            List<Map<String, Object>> labelList =
+                                    (List<Map<String, Object>>) item.getOrDefault("labels", List.of());
+                            List<String> labels = labelList.stream()
+                                    .map(l -> (String) l.get("name"))
+                                    .collect(Collectors.toList());
+                            Number num = (Number) item.get("number");
+                            return new GitHubIssue(
+                                    num != null ? num.intValue() : 0,
+                                    (String) item.get("title"),
+                                    (String) item.get("state"),
+                                    (String) item.get("created_at"),
+                                    (String) item.get("closed_at"),
+                                    owner + "/" + repo,
+                                    labels
+                            );
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    })
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toList());
+
+            cacheService.put(cacheKey, result, Duration.ofMinutes(10));
+            return result;
+        } catch (Exception e) {
+            log.warn("Failed to fetch issues for {}/{}: {}", owner, repo, e.getMessage());
+            return List.of();
+        }
     }
 }

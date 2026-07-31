@@ -15,6 +15,11 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
 server:
   port: 8083
 
@@ -35,3 +40,4 @@ app:
       client-id: ${GITHUB_CLIENT_ID:mock-client-id}
       client-secret: ${GITHUB_CLIENT_SECRET:mock-client-secret}
       redirect-uri: http://localhost:8083/api/auth/oauth/github/callback
+  github-service-url: ${GITHUB_SERVICE_URL:http://localhost:8081}

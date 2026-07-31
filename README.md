@@ -1,516 +1,168 @@
 # 🚀 GitInsight AI
 
 <p align="center">
-  <h3 align="center">AI-Powered GitHub Analytics Platform for Developers and Recruiters</h3>
+  <h3 align="center">AI-Powered GitHub Developer Analytics Platform</h3>
   <p align="center">
-    Analyze GitHub profiles, generate developer insights, and empower recruiters with AI-driven analytics.
+    Analyze GitHub profiles, compute an explainable Developer Score, review code & commit quality,
+    and empower recruiters with AI-driven analytics and PDF reports.
   </p>
 </p>
+
 ---
 
 ## 📖 About the Project
 
-GitInsight AI is a production-grade SaaS application that analyzes GitHub profiles using the GitHub API and AI to generate meaningful developer insights.
+GitInsight AI is a **Java 21 / Spring Boot microservices** platform that analyzes GitHub profiles using the GitHub API and Google Gemini AI.
 
-Instead of manually reviewing repositories, commits, and contribution graphs, users receive an interactive dashboard containing developer analytics, repository health, coding consistency, language statistics, AI portfolio reviews, and much more.
+Instead of manually reviewing repositories, commits, and contribution graphs, users get an interactive dashboard containing a **10-metric Developer Score (0–100)**, repository health, byte-weighted language stacks, **commit & code quality analysis**, AI portfolio reviews, career roadmaps, recruiter tooling, score history tracking, and PDF exportable reports.
 
-This project is being developed following **Software Development Life Cycle (SDLC)** practices similar to real product companies.
-
----
-
-# 🎯 Vision
-
-To become the leading AI-powered developer intelligence platform that helps developers improve their GitHub portfolios while enabling recruiters to make faster, data-driven hiring decisions.
+> ✅ **Phases 1–5 are implemented.** See [`docs/PHASES.md`](docs/PHASES.md) for the phase-by-phase breakdown.
 
 ---
 
-# 💡 Problem Statement
-
-Recruiters spend a significant amount of time manually reviewing GitHub profiles.
-
-Current problems include:
-
-- Manual repository evaluation
-- No standardized developer score
-- Difficult candidate comparison
-- No portfolio review
-- Time-consuming hiring process
-- Limited visibility into developer activity
-
-Developers also struggle to understand:
-
-- Portfolio quality
-- Coding consistency
-- Repository health
-- Areas for improvement
-
----
-
-# ✅ Solution
-
-GitInsight AI automatically analyzes GitHub profiles and provides:
-
-- Developer Analytics Dashboard
-- Repository Analytics
-- Language Usage
-- Contribution Trends
-- Commit Analytics
-- Repository Health Score
-- AI Portfolio Review
-- Developer Score
-- Open Source Activity Score
-- Recruiter Dashboard
-- Candidate Comparison
-- Exportable Reports
-
----
-
-# 👥 Target Users
-
-### Developers
-
-- Portfolio Analysis
-- Coding Consistency
-- AI Suggestions
-- Developer Score
-
-### Students
-
-- Placement Preparation
-- GitHub Portfolio Improvement
-- Skill Analysis
-
-### Recruiters
-
-- Candidate Comparison
-- Hiring Reports
-- Developer Ranking
-- Saved Candidates
-
-### Engineering Managers
-
-- Technical Evaluation
-- Portfolio Review
-- Team Analytics (Future)
-
----
-
-# 👤 User Roles
-
-## 👀 Guest
-
-No login required.
-
-### Features
-
-- Search any GitHub username
-- View profile
-- Repository analytics
-- Language statistics
-- Contribution charts
-
----
-
-## 👨‍💻 Developer
-
-GitHub OAuth Login
-
-### Features
-
-- Personal Dashboard
-- Saved Reports
-- AI Portfolio Review
-- Repository Health
-- Developer Score
-- Coding Suggestions
-- Analysis History
-
----
-
-## 🧑‍💼 Recruiter
-
-### Features
-
-- Search Developers
-- Compare Candidates
-- Save Profiles
-- Export Reports
-- Candidate Ranking
-- Hiring Dashboard
-
----
-
-## 🛡 Administrator
-
-### Features
-
-- User Management
-- Platform Monitoring
-- Usage Analytics
-- Report Management
-
----
-
-# 🚀 Core Features
-
-## Version 1.0 (MVP)
-
-- GitHub Username Search
-- Public Profile Analysis
-- Repository List
-- Programming Language Analytics
-- Contribution Dashboard
-- Charts & Graphs
-- GitHub OAuth Login
-- JWT Authentication
-
----
-
-## Version 2.0
-
-- AI Portfolio Review
-- Developer Score
-- Repository Health Score
-- Coding Consistency
-- Open Source Score
-- Saved Reports
-
----
-
-## Version 3.0
-
-- Recruiter Dashboard
-- Candidate Comparison
-- Hiring Lists
-- PDF Reports
-- Candidate Ranking
-
----
-
-## Version 4.0
-
-- Resume Analysis
-- AI Career Coach
-- Team Analytics
-- Notifications
-- Interview Readiness
-
----
-
-# 🛣 User Journey
-
-## Guest Flow
+## 🏛 High-Level Architecture
 
 ```
-Home Page
-      │
-      ▼
-Enter GitHub Username
-      │
-      ▼
-Analyze
-      │
-      ▼
-Analytics Dashboard
-      │
-      ▼
-Login for Advanced Features
+                       React + TypeScript Frontend (Vite, port 5173)
+                                      │  /api proxy
+                                      ▼
+        ┌─────────────────────────────────────────────────────────┐
+        │  Spring Cloud Microservices (Eureka registry, port 8761) │
+        │                                                         │
+        │  auth-service (8083)   github-service (8081)            │
+        │  JWT / OAuth / Roles   GitHub API + Scoring + Gemini    │
+        │  Recruiter dashboard   Reports + score history + PDF    │
+        │                                                         │
+        │  analytics-service (8082)   common (shared DTOs)        │
+        └─────────────────────────────────────────────────────────┘
+                                      │
+                ┌─────────────────────┴─────────────────────┐
+                ▼                                           ▼
+          PostgreSQL (gitinsight_auth / gitinsight_github)   GitHub REST API
+                                        │
+                                        ▼
+                                  Google Gemini AI
 ```
 
 ---
 
-## Developer Flow
-
-```
-GitHub Login
-      │
-      ▼
-Dashboard
-      │
-      ▼
-My Analytics
-      │
-      ▼
-AI Portfolio Review
-      │
-      ▼
-Saved Reports
-```
-
----
-
-## Recruiter Flow
-
-```
-Login
-      │
-      ▼
-Search Developer
-      │
-      ▼
-Compare Developers
-      │
-      ▼
-Generate Reports
-      │
-      ▼
-Export PDF
-```
-
----
-
-# 🛠 Technology Stack
-
-## Frontend
-
-- React
-- TypeScript
-- Tailwind CSS
-- React Router
-- React Query
-- Axios
-- Recharts
-
-## Backend
-
-- Java 21
-- Spring Boot
-- Spring Security
-- Spring Data JPA
-- JWT Authentication
-- OAuth2 (GitHub)
-
-## Database
-
-- PostgreSQL
-
-## Cache
-
-- Redis
-
-## AI
-
-- Gemini API
-
-## DevOps
-
-- Docker
-- GitHub Actions
-- Render
-- Vercel
-
----
-
-# 🏛 High-Level Architecture
-
-```
-                   React Frontend
-                         │
-                         ▼
-               Spring Boot REST API
-                         │
-          ┌──────────────┴──────────────┐
-          │                             │
-          ▼                             ▼
-     PostgreSQL                     Redis Cache
-          │
-          ▼
-      GitHub API
-          │
-          ▼
-      Gemini API
-```
-
----
-
-# 📂 Project Structure
+## 📂 Project Structure
 
 ```
 GitInsight-AI/
 │
-├── backend/
-│
-├── frontend/
-│
-├── docs/
-│   ├── PRD.md
-│   ├── SRS.md
-│   ├── USER-STORIES.md
-│   ├── API-SPEC.md
-│   ├── DATABASE.md
-│   ├── WIREFRAMES.md
-│   ├── ROADMAP.md
-│
-├── architecture/
-│
-├── database/
-│
-├── docker/
-│
-├── postman/
-│
-├── screenshots/
-│
+├── common/                  # Shared DTOs (ApiResponse), global exception handler
+├── eureka-server/           # Service registry (port 8761)
+├── github-service/          # Core: GitHub API client, ScoringEngine, commit quality, Gemini, reports (8081)
+├── analytics-service/       # Developer analytics service (8082)
+├── auth-service/            # JWT auth, roles, recruiter dashboard backend (8083)
+├── frontend/                # React + TypeScript + Vite + Tailwind (5173)
+├── docs/                    # Architecture, API spec, phases, scoring spec, database design
+├── start-dev.sh             # One-shot: PG + all JARs + frontend
+├── start-services.sh        # Backend-only startup
+├── mvnw                     # Maven wrapper
 └── README.md
 ```
 
----
-
-# 📚 Documentation
-
-| Document | Status |
-|----------|--------|
-| Product Requirements Document | ✅ Planned |
-| Software Requirements Specification | ✅ Planned |
-| User Stories | ✅ Planned |
-| Wireframes | ✅ Planned |
-| Database Design | ✅ Planned |
-| API Specification | ✅ Planned |
-| System Architecture | ✅ Planned |
-| Testing Strategy | ⏳ Upcoming |
-| Deployment Guide | ⏳ Upcoming |
-
----
-
-# 🗓 Development Roadmap
-
-## 📌 Phase 0 – Product Discovery
-
-- Product Vision
-- PRD
-- SRS
-- User Stories
-- Wireframes
-- Database Design
-- API Design
-
----
-
-## 📌 Phase 1 – Backend Foundation
-
-- Spring Boot Setup
-- PostgreSQL
-- GitHub API Integration
-- REST APIs
-
----
-
-## 📌 Phase 2 – Frontend Development
-
-- Landing Page
-- Dashboard
-- Charts
-- Search
-- Analytics
-
----
-
-## 📌 Phase 3 – Authentication
-
-- GitHub OAuth
-- JWT Authentication
-- User Dashboard
-- Saved History
-
----
-
-## 📌 Phase 4 – AI Integration
-
-- AI Portfolio Review
-- Developer Score
-- Repository Health
-- Project Suggestions
-
----
-
-## 📌 Phase 5 – Recruiter Module
-
-- Candidate Comparison
-- Hiring Dashboard
-- Export Reports
-- Recruiter Analytics
-
----
-
-## 📌 Phase 6 – Deployment
-
-- Docker
-- GitHub Actions
-- Render Deployment
-- Vercel Deployment
-
----
-
-# 🌳 Git Workflow
+### github-service internals (the heart of the product)
 
 ```
-main
-│
-develop
-│
-├── feature/backend
-├── feature/frontend
-├── feature/authentication
-├── feature/github-api
-├── feature/analytics
-├── feature/ai
-└── feature/recruiter-dashboard
+github-service/src/main/java/com/gitinsight/githubservice/
+├── controller/
+│   ├── GitHubController.java     # /api/github/** (profile, repos, score, commits/analytics, rate-limit …)
+│   ├── GeminiController.java     # /api/ai/** (summary, roadmap, skills, interview, code-quality …)
+│   ├── ReportsController.java    # /api/reports/** (record, history, generate)
+│   └── HealthController.java
+├── dto/response/                 # DeveloperScoreResponse, CommitAnalyticsResponse, RepositoryResponse …
+├── entity/  +  repository/       # ScoreHistory persistence
+└── service/
+    ├── ScoringEngine.java        # Modular 10-metric engine (see docs/SCORING-ENGINE.md)
+    ├── CommitQualityService.java # Phase 5: commit message quality, conventional rate, weekly activity
+    ├── GitHubIntegrationService.java  # PRs, issues, events, languages (byte-weighted), contributors
+    ├── GeminiService.java        # AI prompt builders + graceful fallback
+    ├── ScoreHistoryService.java  # Trend snapshots & stats
+    ├── GitHubCacheService.java   # In-memory TTL cache (rate-limit friendly)
+    └── impl/GitHubServiceImpl.java  # Raw GitHub REST client
 ```
 
 ---
 
-# 📝 Commit Convention
+## 🗓 Delivery Phases
 
-```
-feat: add GitHub profile analysis
+| Phase | Scope | Status |
+|-------|-------|--------|
+| **Phase 1** | 10-metric Developer Scoring Engine (0–100) with levels, repo filtering rules | ✅ Done |
+| **Phase 2** | Recruiter dashboard — save/bookmark candidates, notes, compare | ✅ Done |
+| **Phase 3** | Gemini AI module — summaries, skills, career roadmap, interview, compare, insights | ✅ Done |
+| **Phase 4** | Reports — score history tracking, trend charts, PDF export | ✅ Done |
+| **Phase 5** | Commit & Code Quality Analysis — commit message quality, conventional-commit rate, commit size balance, weekly activity, AI code-quality review | ✅ Done |
 
-fix: resolve authentication issue
-
-docs: update README
-
-refactor: improve analytics service
-
-test: add unit tests
-
-chore: configure Docker
-```
+Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 
 ---
 
-# 🚀 Future Enhancements
+## 🔑 Environment Variables
 
-- GitLab Support
-- Bitbucket Support
-- Chrome Extension
-- Mobile Application
-- Resume Parser
-- AI Career Coach
-- Enterprise Dashboard
-- Team Analytics
-- Coding Streak Prediction
-- Developer Leaderboard
+| Variable | Service | Purpose |
+|----------|---------|---------|
+| `GITHUB_TOKEN` | github-service | GitHub PAT → 5,000 req/hr instead of 60. Optional but recommended |
+| `GEMINI_API_KEY` | github-service | Google Gemini key → live AI summaries/roadmaps/reviews. Falls back to templates |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | auth-service | GitHub OAuth (optional) |
+| `JWT_SECRET` | auth-service | Override default JWT signing key |
 
 ---
 
-# ⭐ Support
+## 🚀 Running Locally
+
+Prerequisites: **Java 21**, **Maven** (or `./mvnw`), **Node 20+ / Bun**, **PostgreSQL 14+**.
+
+```bash
+# 1. Create databases (skip if you already created them)
+sudo -u postgres createdb gitinsight_auth
+sudo -u postgres createdb gitinsight_github
+
+# 2. Build everything (including the common module) — run from the repo ROOT
+./mvnw clean package -DskipTests
+
+# 3. Start the full stack (PostgreSQL + Eureka + all services + frontend)
+./start-dev.sh
+```
+
+Or start services manually:
+
+```bash
+# Terminal A — Eureka
+java -jar eureka-server/target/eureka-server-*.jar
+
+# Terminal B — backends (order matters: Eureka first)
+java -jar auth-service/target/auth-service-*.jar       # 8083
+java -jar analytics-service/target/analytics-service-*.jar  # 8082
+java -jar github-service/target/github-service-*.jar   # 8081
+
+# Terminal C — frontend
+cd frontend && bun install && bun run dev --host 0.0.0.0 --port 5173
+```
+
+Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) → explore the Developer Score, Language Stack, Top Contributors, Commit & Code Quality, and AI reviews.
+
+> ⚠️ The `github-service` JAR must be **rebuilt** after any backend change: `./mvnw clean package -DskipTests`, then restart it.
+
+---
+
+## 📚 Documentation
+
+| Document | Contents |
+|----------|----------|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Services, ports, request flow, data flow |
+| [`docs/API-SPEC.md`](docs/API-SPEC.md) | Every REST endpoint across all services |
+| [`docs/PHASES.md`](docs/PHASES.md) | Phase-by-phase deliverables (1–5) |
+| [`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md) | The 10 metrics, formulas, weights, levels, filtering rules |
+| [`docs/DATABASE.md`](docs/DATABASE.md) | Tables, indexes, relationships |
+
+---
+
+## ⭐ Support
 
 If you like this project, please consider giving it a **⭐ Star** on GitHub.
 
 It motivates continued development and helps others discover the project.
----
-
-# 🚧 Project Status
-
-> **Currently in Product Planning & Active Development**
-
-This project follows a professional SDLC approach, including:
-
-- ✅ Product Planning
-- ✅ Documentation
-- 🔄 System Design
-- 🔄 Database Design
-- ⏳ Backend Development
-- ⏳ Frontend Development
-- ⏳ AI Integration
-- ⏳ Testing
-- ⏳ Deployment

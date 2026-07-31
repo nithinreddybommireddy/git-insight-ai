@@ -7,12 +7,18 @@ import { Card } from "@/components/ui/card";
 import { ProfileCard } from "@/components/ProfileCard";
 import { RepoList } from "@/components/RepoList";
 import { DeveloperScoreCard } from "@/components/DeveloperScore";
+import { StackContributors } from "@/components/StackContributors";
+import { CommitQualityPanel } from "@/components/CommitQualityPanel";
 import { Footer } from "@/components/Footer";
 import {
   githubApi,
+  githubApiEnhanced,
   type GitHubProfile,
   type Repository,
   type DeveloperScore,
+  type LanguageBreakdown,
+  type GitHubContributor,
+  type CommitAnalytics,
   type ApiResponse,
 } from "@/services/api";
 import toast from "react-hot-toast";
@@ -78,6 +84,9 @@ export function SearchResults() {
   const [profile, setProfile] = useState<GitHubProfile | null>(null);
   const [repos, setRepos] = useState<Repository[]>([]);
   const [score, setScore] = useState<DeveloperScore | null>(null);
+  const [languages, setLanguages] = useState<LanguageBreakdown[]>([]);
+  const [contributors, setContributors] = useState<GitHubContributor[]>([]);
+  const [commitAnalytics, setCommitAnalytics] = useState<CommitAnalytics | null>(null);
   const [loading, setLoading] = useState(false);
   const [reposLoading, setReposLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -97,17 +106,29 @@ export function SearchResults() {
         addRecentSearch(username);
         setRecentSearches(getRecentSearches);
 
-        // Fetch repos and score in parallel
+        // Fetch repos, score, byte-weighted languages, contributors, and commit analytics in parallel
         setReposLoading(true);
         Promise.allSettled([
           githubApi.getRepositories(username),
           githubApi.getDeveloperScore(username),
-        ]).then(([reposResult, scoreResult]) => {
+          githubApiEnhanced.getWeightedLanguages(username),
+          githubApiEnhanced.getContributors(username),
+          githubApiEnhanced.getCommitAnalytics(username),
+        ]).then(([reposResult, scoreResult, langsResult, contribsResult, commitsResult]) => {
           if (reposResult.status === "fulfilled" && reposResult.value.success) {
             setRepos(reposResult.value.data);
           }
           if (scoreResult.status === "fulfilled" && scoreResult.value.success) {
             setScore(scoreResult.value.data);
+          }
+          if (langsResult.status === "fulfilled" && langsResult.value.success) {
+            setLanguages(langsResult.value.data);
+          }
+          if (contribsResult.status === "fulfilled" && contribsResult.value.success) {
+            setContributors(contribsResult.value.data);
+          }
+          if (commitsResult.status === "fulfilled" && commitsResult.value.success) {
+            setCommitAnalytics(commitsResult.value.data);
           }
           setReposLoading(false);
         });
@@ -364,6 +385,28 @@ export function SearchResults() {
           {score && (
             <div className="mt-6">
               <DeveloperScoreCard score={score} />
+            </div>
+          )}
+
+          {/* Byte-weighted languages + top contributors */}
+          {(languages.length > 0 || contributors.length > 0 || reposLoading) && (
+            <div className="mt-6">
+              <StackContributors
+                languages={languages}
+                contributors={contributors}
+                loading={reposLoading}
+              />
+            </div>
+          )}
+
+          {/* Phase 5 — Commit & code quality analysis */}
+          {(commitAnalytics || reposLoading) && (
+            <div className="mt-6">
+              <CommitQualityPanel
+                analytics={commitAnalytics}
+                loading={reposLoading}
+                username={query}
+              />
             </div>
           )}
 

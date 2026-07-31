@@ -1,16 +1,20 @@
 package com.gitinsight.authservice.controller;
 
+import com.gitinsight.authservice.dto.response.JobMatchResponse;
 import com.gitinsight.authservice.entity.RecruiterNote;
 import com.gitinsight.authservice.entity.SavedCandidate;
 import com.gitinsight.authservice.entity.User;
 import com.gitinsight.authservice.repository.RecruiterNoteRepository;
 import com.gitinsight.authservice.repository.SavedCandidateRepository;
 import com.gitinsight.authservice.repository.UserRepository;
+import com.gitinsight.authservice.service.JobMatcherService;
 import com.gitinsight.common.dto.response.ApiResponse;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -21,22 +25,99 @@ import java.util.Map;
 @PreAuthorize("hasAnyRole('RECRUITER', 'ADMIN')")
 public class RecruiterController {
 
+    private static final long MAX_JOB_DESCRIPTION_BYTES = 5L * 1024 * 1024; // 5 MB
+
     private final SavedCandidateRepository savedCandidateRepository;
     private final RecruiterNoteRepository recruiterNoteRepository;
     private final UserRepository userRepository;
+    private final JobMatcherService jobMatcherService;
 
     public RecruiterController(SavedCandidateRepository savedCandidateRepository,
                                 RecruiterNoteRepository recruiterNoteRepository,
-                                UserRepository userRepository) {
+                                UserRepository userRepository,
+                                JobMatcherService jobMatcherService) {
         this.savedCandidateRepository = savedCandidateRepository;
         this.recruiterNoteRepository = recruiterNoteRepository;
         this.userRepository = userRepository;
+        this.jobMatcherService = jobMatcherService;
     }
 
     private User getRecruiter(Authentication auth) {
         Long userId = (Long) auth.getPrincipal();
         return userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("Recruiter not found"));
+    }
+
+    // ── Job-Description Match (file-driven candidate search) ──
+
+    /**
+     * Upload a job description file (.txt/.md/.pdf) and optionally a CSV/TXT of
+     * GitHub usernames. Runs a fresh candidate search ranked by job fit.
+     * Without a usernames file, the recruiter's saved candidates are used.
+     */
+    @PostMapping(value = "/match", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<JobMatchResponse>> matchByJobDescription(
+            Authentication auth,
+            @RequestPart("file") MultipartFile jobDescriptionFile,
+            @RequestPart(value = "usernames", required = false) MultipartFile usernamesFile,
+            @RequestParam(value = "ai", required = false, defaultValue = "false") boolean includeAi) {
+
+        try {
+            if (jobDescriptionFile == null || jobDescriptionFile.isEmpty()) {
+                return badRequest("Job description file is empty.");
+            }
+            if (jobDescriptionFile.getSize() > MAX_JOB_DESCRIPTION_BYTES) {
+                return badRequest("Job description file must be under 5 MB.");
+            }
+
+            String jdText = jobMatcherService.extractText(
+                    jobDescriptionFile.getOriginalFilename(), jobDescriptionFile.getBytes());
+            if (jdText == null || jdText.isBlank()) {
+                return badRequest("Could not read any text from the job description file.");
+            }
+
+            User recruiter = getRecruiter(auth);
+            List<String> usernames;
+            String source;
+            if (usernamesFile != null && !usernamesFile.isEmpty()) {
+                if (usernamesFile.getSize() > MAX_JOB_DESCRIPTION_BYTES) {
+                    return badRequest("Usernames file must be under 5 MB.");
+                }
+                usernames = jobMatcherService.parseUsernames(
+                        jobMatcherService.readText(usernamesFile.getBytes()));
+                source = "file";
+            } else {
+                usernames = savedCandidateRepository.findByRecruiterOrderByCreatedAtDesc(recruiter)
+                        .stream()
+                        .map(SavedCandidate::getCandidateUsername)
+                        .toList();
+                source = "saved";
+            }
+
+            List<String> pool = usernames.stream()
+                    .distinct()
+                    .limit(JobMatcherService.MAX_CANDIDATES)
+                    .toList();
+
+            if (pool.isEmpty()) {
+                return ResponseEntity.ok(new ApiResponse<>(true,
+                        "No candidates to match — upload a usernames file or save candidates first.",
+                        JobMatchResponse.empty(source)));
+            }
+
+            JobMatchResponse response = jobMatcherService.match(jdText, pool, source, includeAi);
+            return ResponseEntity.ok(new ApiResponse<>(true,
+                    "Job match completed for " + response.processed() + " candidates.", response));
+        } catch (IllegalArgumentException ex) {
+            return badRequest(ex.getMessage());
+        } catch (Exception ex) {
+            return ResponseEntity.internalServerError().body(new ApiResponse<>(false,
+                    "Job match failed: " + ex.getMessage(), null));
+        }
+    }
+
+    private ResponseEntity<ApiResponse<JobMatchResponse>> badRequest(String message) {
+        return ResponseEntity.badRequest().body(new ApiResponse<>(false, message, null));
     }
 
     // ── Saved Candidates ──

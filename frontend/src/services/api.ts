@@ -278,6 +278,44 @@ export interface RecruiterStats {
   totalNotes: number;
 }
 
+export interface JobMatchCandidate {
+  username: string;
+  name: string | null;
+  avatarUrl: string | null;
+  bio: string | null;
+  developerScore: number;
+  level: string;
+  matchScore: number;
+  skillMatchPercent: number;
+  matchedSkills: string[];
+  missingSkills: string[];
+  languages: string[];
+  topRepos: string[];
+}
+
+export interface JobMatchResponse {
+  jobTitle: string;
+  requiredSkills: string[];
+  source: "file" | "saved";
+  total: number;
+  processed: number;
+  failed: number;
+  results: JobMatchCandidate[];
+  aiEnabled: boolean;
+  aiModel: string | null;
+  aiExplanations: JobMatchAiExplanation[];
+}
+
+export interface JobMatchAiExplanation {
+  username: string;
+  aiRank: number;
+  fitLabel: string;
+  explanation: string;
+  strengths: string[];
+  gaps: string[];
+  recommendation: string;
+}
+
 export interface GitHubOrg {
   login: string;
   avatarUrl: string;
@@ -317,12 +355,68 @@ export interface LanguageBreakdown {
   repos: number;
 }
 
+export interface GitHubContributor {
+  login: string;
+  contributions: number;
+  avatarUrl: string | null;
+}
+
 export interface ContributionStats {
   totalCommits: number;
   totalPRs: number;
   totalIssues: number;
   reposContributedTo: number;
   orgCount: number;
+}
+
+export interface RateLimitResource {
+  limit: number;
+  used: number;
+  remaining: number;
+  resetEpoch: number;
+  resetDate: string;
+}
+
+export interface RateLimitStatus {
+  authenticated: boolean;
+  hint: string;
+  headers: Record<string, string>;
+  core: RateLimitResource;
+  search: RateLimitResource;
+  graphql: RateLimitResource;
+}
+
+export interface CommitWeeklyActivity {
+  week: string;
+  commits: number;
+}
+
+export interface CommitRepoStat {
+  repoName: string;
+  totalCommits: number;
+  additions: number;
+  deletions: number;
+  messageQuality: number;
+}
+
+export interface CommitAnalytics {
+  username: string;
+  totalCommits: number;
+  totalAdditions: number;
+  totalDeletions: number;
+  commitsPerWeek: number;
+  reposAnalyzed: number;
+  codeQualityScore: number;
+  commitMessageQuality: number;
+  conventionalCommitRate: number;
+  averageMessageLength: number;
+  commitSizeScore: number;
+  topCommitTypes: string[];
+  weeklyActivity: CommitWeeklyActivity[];
+  repoBreakdown: CommitRepoStat[];
+  explanation: string;
+  improvementSuggestion: string;
+  trend: "up" | "stable" | "down";
 }
 
 // ==================== Recruiter API ====================
@@ -380,6 +474,22 @@ export const recruiterApi = {
     const { data } = await api.get<ApiResponse<RecruiterStats>>("/recruiter/stats");
     return data;
   },
+
+  /**
+   * Upload a job description file (.txt/.md/.pdf) and optionally a CSV/TXT of
+   * GitHub usernames to run a fresh candidate search ranked by job fit.
+   * Without a usernames file the recruiter's saved candidates are used.
+   */
+  matchByJobDescription: async (file: File, usernamesFile?: File | null, ai?: boolean): Promise<ApiResponse<JobMatchResponse>> => {
+    const form = new FormData();
+    form.append("file", file);
+    if (usernamesFile) form.append("usernames", usernamesFile);
+    if (ai) form.append("ai", "true");
+    // axios (v1) clears the default JSON content-type for FormData so the
+    // browser sets the correct multipart boundary automatically.
+    const { data } = await api.post<ApiResponse<JobMatchResponse>>("/recruiter/match", form);
+    return data;
+  },
 };
 
 // ==================== Enhanced GitHub API ====================
@@ -410,6 +520,16 @@ export const githubApiEnhanced = {
     return data;
   },
 
+  getWeightedLanguages: async (username: string): Promise<ApiResponse<LanguageBreakdown[]>> => {
+    const { data } = await api.get<ApiResponse<LanguageBreakdown[]>>(`/github/${username}/languages/weighted`);
+    return data;
+  },
+
+  getContributors: async (username: string): Promise<ApiResponse<GitHubContributor[]>> => {
+    const { data } = await api.get<ApiResponse<GitHubContributor[]>>(`/github/${username}/contributors`);
+    return data;
+  },
+
   getContributionStats: async (username: string): Promise<ApiResponse<ContributionStats>> => {
     const { data } = await api.get<ApiResponse<ContributionStats>>(`/github/${username}/contribution-stats`);
     return data;
@@ -417,6 +537,16 @@ export const githubApiEnhanced = {
 
   getFullInsights: async (username: string): Promise<ApiResponse<DeveloperScore>> => {
     const { data } = await api.get<ApiResponse<DeveloperScore>>(`/github/${username}/insights`);
+    return data;
+  },
+
+  getRateLimit: async (): Promise<ApiResponse<RateLimitStatus>> => {
+    const { data } = await api.get<ApiResponse<RateLimitStatus>>("/github/rate-limit");
+    return data;
+  },
+
+  getCommitAnalytics: async (username: string): Promise<ApiResponse<CommitAnalytics>> => {
+    const { data } = await api.get<ApiResponse<CommitAnalytics>>(`/github/${username}/commits/analytics`);
     return data;
   },
 };
@@ -461,6 +591,15 @@ export const aiApi = {
 
   getEnhancedInsights: async (username: string): Promise<ApiResponse<{ score: DeveloperScore; aiInsight: string }>> => {
     const { data } = await api.get<ApiResponse<{ score: DeveloperScore; aiInsight: string }>>(`/ai/insights/${username}`);
+    return data;
+  },
+
+  getCodeQuality: async (username: string): Promise<
+    ApiResponse<{ analytics: CommitAnalytics; aiReview: string }>
+  > => {
+    const { data } = await api.get<ApiResponse<{ analytics: CommitAnalytics; aiReview: string }>>(
+      `/ai/code-quality/${username}`
+    );
     return data;
   },
 };

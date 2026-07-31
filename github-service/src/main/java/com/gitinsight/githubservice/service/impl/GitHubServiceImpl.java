@@ -51,7 +51,9 @@ public class GitHubServiceImpl implements GitHubService {
         } catch (HttpClientErrorException.NotFound e) {
             throw new RuntimeException("GitHub user '" + username + "' not found.");
         } catch (HttpClientErrorException.Forbidden e) {
-            throw new RuntimeException("GitHub API rate limit exceeded. Please try again later.");
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
         }
 
         if (apiResponse == null) {
@@ -73,7 +75,9 @@ public class GitHubServiceImpl implements GitHubService {
         } catch (HttpClientErrorException.NotFound e) {
             throw new RuntimeException("GitHub user '" + username + "' not found.");
         } catch (HttpClientErrorException.Forbidden e) {
-            throw new RuntimeException("GitHub API rate limit exceeded. Please try again later.");
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
         }
 
         if (apiRepos == null) {
@@ -108,8 +112,10 @@ public class GitHubServiceImpl implements GitHubService {
         repo.setCreatedAt(api.getCreatedAt());
         repo.setUpdatedAt(api.getUpdatedAt());
         repo.setPushedAt(api.getPushedAt());
-        repo.setArchived(false);
-        repo.setDisabled(false);
+        // Preserve real values so the ScoringEngine's repository filtering rules work
+        // (fork/archived/template/generated/empty repos must be excluded from scoring)
+        repo.setArchived(api.isArchived());
+        repo.setDisabled(api.isDisabled());
 
         // Calculate health scores
         repo.setPopularityScore(calculatePopularityScore(api));

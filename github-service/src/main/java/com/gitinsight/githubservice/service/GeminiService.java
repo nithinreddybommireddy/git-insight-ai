@@ -1,8 +1,13 @@
 package com.gitinsight.githubservice.service;
 
+import com.gitinsight.githubservice.dto.request.JobMatchRequest;
+import com.gitinsight.githubservice.dto.response.CommitAnalyticsResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
+import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,7 +38,12 @@ public class GeminiService {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiService.class);
     private static final String GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    private static final String MODEL_NAME = "gemini-2.0-flash";
     private static final int MAX_OUTPUT_TOKENS = 800;
+    private static final int JOB_MATCH_MAX_OUTPUT_TOKENS = 1500;
+    private static final int MAX_JOB_DESCRIPTION_CHARS = 3500;
+
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private final RestClient restClient;
     private final String apiKey;
@@ -144,17 +154,54 @@ public class GeminiService {
         return callGemini(prompt, "Enhanced Insights");
     }
 
+    /**
+     * Phase 5 — AI code quality review based on real commit history.
+     */
+    public String generateCodeQualityReview(
+            String username,
+            CommitAnalyticsResponse commitAnalytics,
+            DeveloperScoreResponse score
+    ) {
+        String prompt = buildCodeQualityPrompt(username, commitAnalytics, score);
+        return callGemini(prompt, "Code Quality Review");
+    }
+
+    /**
+     * AI job-match: review a job description plus the deterministically matched
+     * candidates and return per-candidate fit explanations.
+     */
+    public JobMatchAiResponse generateJobMatchExplanations(JobMatchRequest request) {
+        if (!enabled) {
+            log.info("Gemini job-match skipped (no API key configured)");
+            return JobMatchAiResponse.disabled();
+        }
+        String prompt = buildJobMatchPrompt(request);
+        String raw = callGemini(prompt, "Job Match", JOB_MATCH_MAX_OUTPUT_TOKENS);
+        if (raw == null || raw.isBlank()) {
+            return JobMatchAiResponse.disabled();
+        }
+        List<JobMatchAiResponse.Explanation> explanations = parseJobMatchExplanations(raw);
+        if (explanations.isEmpty()) {
+            return JobMatchAiResponse.disabled();
+        }
+        return new JobMatchAiResponse(true, MODEL_NAME, explanations);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // GEMINI API CALL
     // ═══════════════════════════════════════════════════════════════
 
     private String callGemini(String prompt, String taskName) {
+        return callGemini(prompt, taskName, MAX_OUTPUT_TOKENS);
+    }
+
+    private String callGemini(String prompt, String taskName, int maxOutputTokens) {
         if (!enabled) {
             return getFallbackResponse(taskName);
         }
 
         try {
-            Map<String, Object> requestBody = buildGeminiRequest(prompt);
+            Map<String, Object> requestBody = buildGeminiRequest(prompt, maxOutputTokens);
 
             Map<String, Object> response = restClient.post()
                     .uri(GEMINI_API_URL + "?key=" + apiKey)
@@ -191,6 +238,10 @@ public class GeminiService {
     }
 
     private Map<String, Object> buildGeminiRequest(String userPrompt) {
+        return buildGeminiRequest(userPrompt, MAX_OUTPUT_TOKENS);
+    }
+
+    private Map<String, Object> buildGeminiRequest(String userPrompt, int maxOutputTokens) {
         Map<String, Object> systemPart = new HashMap<>();
         systemPart.put("text", getSystemInstruction());
 
@@ -206,7 +257,7 @@ public class GeminiService {
 
         Map<String, Object> generationConfig = new HashMap<>();
         generationConfig.put("temperature", 0.7);
-        generationConfig.put("maxOutputTokens", MAX_OUTPUT_TOKENS);
+        generationConfig.put("maxOutputTokens", maxOutputTokens);
         generationConfig.put("topP", 0.9);
 
         Map<String, Object> request = new HashMap<>();
@@ -463,6 +514,62 @@ public class GeminiService {
         );
     }
 
+    private String buildCodeQualityPrompt(
+            String username, CommitAnalyticsResponse a, DeveloperScoreResponse score
+    ) {
+        String weekly = a.getWeeklyActivity() == null || a.getWeeklyActivity().isEmpty()
+                ? "No weekly activity data"
+                : a.getWeeklyActivity().stream()
+                        .limit(12)
+                        .map(w -> w.getWeek() + ": " + w.getCommits() + " commits")
+                        .collect(Collectors.joining(", "));
+
+        String repos = a.getRepoBreakdown() == null || a.getRepoBreakdown().isEmpty()
+                ? "No repository data"
+                : a.getRepoBreakdown().stream()
+                        .limit(8)
+                        .map(r -> String.format("  - %s: %d commits (+%d/-%d)",
+                                r.getRepoName(), r.getTotalCommits(), r.getAdditions(), r.getDeletions()))
+                        .collect(Collectors.joining("\n"));
+
+        return String.format("""
+                Provide a concise AI code-quality review for GitHub developer %s based on their real commit history.
+                                
+                **Developer Score:** %d/100 (%s)
+                                
+                **Commit Analytics:**
+                - Total Commits: %d
+                - Commits per Week: %.1f
+                - Additions: %d | Deletions: %d
+                - Code Quality Score: %d/100
+                - Commit Message Quality: %d/100
+                - Conventional Commit Rate: %d%%
+                - Average Message Length: %.0f chars
+                - Commit Size Score: %d/100
+                - Top Commit Types: %s
+                                
+                **Weekly Activity (last 12 weeks):** %s
+                                
+                **Per-Repository Breakdown:**
+                %s
+                                
+                Provide:
+                1. Overall commit-hygiene assessment (2-3 sentences)
+                2. Specific strengths in how they commit code
+                3. Specific weaknesses (message quality, commit size, consistency)
+                4. 3 actionable recommendations to improve code quality and reviewability
+                """,
+                username, score.getOverallScore(), score.getLevel(),
+                a.getTotalCommits(), a.getCommitsPerWeek(),
+                a.getTotalAdditions(), a.getTotalDeletions(),
+                a.getCodeQualityScore(), a.getCommitMessageQuality(),
+                a.getConventionalCommitRate(), a.getAverageMessageLength(),
+                a.getCommitSizeScore(),
+                a.getTopCommitTypes() != null ? String.join(", ", a.getTopCommitTypes()) : "none",
+                weekly, repos
+        );
+    }
+
     private String buildEnhancedInsightsPrompt(
             String username, DeveloperScoreResponse score, GitHubProfileResponse profile,
             List<RepositoryResponse> repos
@@ -509,6 +616,109 @@ public class GeminiService {
         );
     }
 
+    private String buildJobMatchPrompt(JobMatchRequest request) {
+        String candidates = request.candidates() == null || request.candidates().isEmpty()
+                ? "None provided"
+                : request.candidates().stream()
+                        .limit(10)
+                        .map(c -> String.format(
+                                "- %s (score %d/100, %s) | languages: %s | matched: %s | missing: %s | top repos: %s | bio: %s",
+                                c.username(), c.developerScore(), nz(c.level(), "N/A"),
+                                joinList(c.languages()), joinList(c.matchedSkills()), joinList(c.missingSkills()),
+                                joinList(c.topRepos()), nz(c.bio(), "N/A")))
+                        .collect(Collectors.joining("\n"));
+
+        return String.format("""
+                You are helping a recruiter shortlist candidates for a job opening.
+                A deterministic engine has already matched each candidate's skills against the job's required skills
+                and computed a developer score. Your job is to explain WHY each candidate does or does not fit.
+                                
+                **Job Title:** %s
+                **Job Description:** %s
+                **Required Skills:** %s
+                                
+                **Candidates:**
+                %s
+                                
+                Return STRICT JSON only — an array of objects, one per candidate you can reason about, with keys:
+                - username (string)
+                - fitLabel (one of: "Strong fit", "Good fit", "Partial fit", "Weak fit")
+                - explanation (2-3 sentences referencing their actual languages, repositories, score, and matched/missing skills)
+                - strengths (array of 2-3 short strings)
+                - gaps (array of 1-3 short strings)
+                - recommendation (one short sentence: "Interview", "Consider", or "Skip", plus a brief reason)
+                                
+                Rules: base everything strictly on the provided data; never invent repositories, skills, or experience;
+                if a candidate's data is too thin to judge, still give your best assessment from what is shown.
+                """,
+                nz(request.jobTitle(), "N/A"),
+                truncate(nz(request.jobDescription(), "N/A"), MAX_JOB_DESCRIPTION_CHARS),
+                joinList(request.requiredSkills()),
+                candidates
+        );
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<JobMatchAiResponse.Explanation> parseJobMatchExplanations(String raw) {
+        try {
+            String json = raw.trim();
+            json = json.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("```$", "").trim();
+            int start = json.indexOf('[');
+            int end = json.lastIndexOf(']');
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+
+            List<Map<String, Object>> items = OBJECT_MAPPER.readValue(
+                    json, new TypeReference<List<Map<String, Object>>>() {});
+
+            List<JobMatchAiResponse.Explanation> out = new ArrayList<>();
+            int rank = 0;
+            for (Map<String, Object> item : items) {
+                rank++;
+                String username = str(item.get("username"));
+                if (username == null || username.isBlank()) continue;
+                out.add(new JobMatchAiResponse.Explanation(
+                        username,
+                        rank,
+                        nz(str(item.get("fitLabel")), "Partial fit"),
+                        nz(str(item.get("explanation")), ""),
+                        strList(item.get("strengths")),
+                        strList(item.get("gaps")),
+                        nz(str(item.get("recommendation")), "")
+                ));
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("Failed to parse Gemini job-match output: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private static String str(Object o) {
+        return o instanceof String s ? s : (o != null ? String.valueOf(o) : null);
+    }
+
+    private static String nz(String s, String fallback) {
+        return s == null || s.isBlank() ? fallback : s;
+    }
+
+    private static String truncate(String s, int max) {
+        return s == null ? "" : (s.length() > max ? s.substring(0, max) : s);
+    }
+
+    private static String joinList(List<String> list) {
+        return list == null || list.isEmpty() ? "none" : String.join(", ", list);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> strList(Object o) {
+        if (o instanceof List<?> list) {
+            return (List<String>) list.stream().map(String::valueOf).collect(Collectors.toList());
+        }
+        return List.of();
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // FALLBACK RESPONSES (when API key is not configured)
     // ═══════════════════════════════════════════════════════════════
@@ -534,6 +744,13 @@ public class GeminiService {
                     "AI-powered developer comparison requires a Gemini API key. " +
                     "The comparison page already provides detailed side-by-side metric analysis.";
             case "Enhanced Insights" -> null;
+            case "Code Quality Review" ->
+                    "AI-powered code quality review requires a Gemini API key. " +
+                    "The commit analytics module already provides rule-based code quality metrics " +
+                    "(message quality, conventional commit rate, commit size, and weekly activity).";
+            case "Job Match" ->
+                    "AI-powered job match requires a Gemini API key. " +
+                    "The deterministic match engine already ranks candidates by skill fit and developer score.";
             default -> null;
         };
     }

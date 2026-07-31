@@ -5,6 +5,8 @@ import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse.Develope
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse.MetricScore;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
+import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubContributor;
+import com.gitinsight.githubservice.service.GitHubIntegrationService.LanguageBreakdown;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -46,6 +48,21 @@ public class ScoringEngine {
             List<RepositoryResponse> allRepos,
             GitHubProfileResponse profile
     ) {
+        return calculate(username, allRepos, profile, null, null);
+    }
+
+    /**
+     * Full scoring entry point with optional enriched GitHub data.
+     * {@code weightedLanguages} — byte-weighted language breakdown (nullable; falls back to repo-size heuristic).
+     * {@code contributors} — aggregate contributors across the developer's repos (nullable; falls back to fork/issue signals).
+     */
+    public DeveloperScoreResponse calculate(
+            String username,
+            List<RepositoryResponse> allRepos,
+            GitHubProfileResponse profile,
+            List<LanguageBreakdown> weightedLanguages,
+            List<GitHubContributor> contributors
+    ) {
         // Filter: ignore forks, archived, empty, templates
         List<RepositoryResponse> effectiveRepos = allRepos.stream()
                 .filter(r -> !r.isFork())
@@ -72,8 +89,8 @@ public class ScoringEngine {
         MetricScore health = calcRepositoryHealth(effectiveRepos);
         MetricScore quality = calcRepositoryQuality(effectiveRepos);
         MetricScore consistency = calcContributionConsistency(effectiveRepos, repoCount);
-        MetricScore diversity = calcLanguageDiversity(effectiveRepos);
-        MetricScore collaboration = calcCollaborationScore(effectiveRepos, allRepos);
+        MetricScore diversity = calcLanguageDiversity(effectiveRepos, weightedLanguages);
+        MetricScore collaboration = calcCollaborationScore(effectiveRepos, allRepos, contributors, username);
         MetricScore impact = calcOpenSourceImpact(effectiveRepos);
         MetricScore pop = calcPopularity(effectiveRepos, profile);
         MetricScore maintenance = calcMaintenance(effectiveRepos);
@@ -350,6 +367,49 @@ public class ScoringEngine {
     // ═══════════════════════════════════════════════════
 
     MetricScore calcLanguageDiversity(List<RepositoryResponse> repos) {
+        return calcLanguageDiversity(repos, null);
+    }
+
+    MetricScore calcLanguageDiversity(List<RepositoryResponse> repos, List<LanguageBreakdown> weightedLanguages) {
+        // Real byte-weighted data from GitHub's /languages endpoint (weighted by repository size)
+        if (weightedLanguages != null && !weightedLanguages.isEmpty()) {
+            int languageCount = weightedLanguages.size();
+            double diversityBonus = Math.min(languageCount * 12, 60);
+
+            // Shannon diversity index based on actual byte share
+            double total = weightedLanguages.stream().mapToDouble(LanguageBreakdown::percentage).sum();
+            double entropy = 0;
+            for (LanguageBreakdown lb : weightedLanguages) {
+                double p = total > 0 ? lb.percentage() / total : 0;
+                if (p > 0) entropy -= p * (Math.log(p) / Math.log(2));
+            }
+            double normalizedEntropy = Math.min(entropy / Math.log(Math.max(languageCount, 2)) / Math.log(2), 1.0);
+
+            int score = (int) Math.round(diversityBonus + normalizedEntropy * 40);
+            score = Math.min(score, 100);
+
+            MetricScore m = new MetricScore();
+            m.setScore(score);
+            m.setWeight(10);
+            m.setLabel("Language Diversity");
+            m.setDescription("Variety and balance of programming languages, weighted by actual code volume");
+            m.setIcon("code-2");
+            m.setTrend(score >= 60 ? "up" : score >= 30 ? "stable" : "down");
+
+            if (score >= 70) {
+                m.setExplanation("Strong multi-language developer with well-distributed code across " + languageCount + " languages (byte-weighted)");
+                m.setImprovementSuggestion("Consider exploring new languages or frameworks to further diversify");
+            } else if (score >= 35) {
+                m.setExplanation("Uses " + languageCount + " languages with solid depth in primary languages");
+                m.setImprovementSuggestion("Try learning a new language or framework to broaden your stack");
+            } else {
+                m.setExplanation("Code volume is concentrated in " + languageCount + " language(s)");
+                m.setImprovementSuggestion("Explore additional programming languages to increase versatility");
+            }
+            return m;
+        }
+
+        // Fallback: repo-size-weighted heuristic when /languages data is unavailable
         Map<String, Integer> langSize = new HashMap<>();
         int totalSize = 0;
 
@@ -418,6 +478,11 @@ public class ScoringEngine {
     // ═══════════════════════════════════════════════════
 
     MetricScore calcCollaborationScore(List<RepositoryResponse> effective, List<RepositoryResponse> all) {
+        return calcCollaborationScore(effective, all, null, null);
+    }
+
+    MetricScore calcCollaborationScore(List<RepositoryResponse> effective, List<RepositoryResponse> all,
+                                       List<GitHubContributor> contributors, String username) {
         int score = 20; // base
 
         // Forks of their repos — indicates others find their work valuable
@@ -441,6 +506,20 @@ public class ScoringEngine {
         // Watchers on their repos
         long totalWatchers = effective.stream().mapToInt(RepositoryResponse::getWatchers).sum();
         if (totalWatchers > 0) score += 5;
+
+        // External contributors to their repos (from the /contributors API) — genuine collaboration signal
+        if (contributors != null && !contributors.isEmpty()) {
+            long externalCount = contributors.stream()
+                    .map(GitHubContributor::login)
+                    .filter(Objects::nonNull)
+                    .filter(l -> username == null || !l.equalsIgnoreCase(username))
+                    .distinct()
+                    .count();
+            if (externalCount > 0) score += 5;
+            if (externalCount >= 3) score += 5;
+            if (externalCount >= 10) score += 10;
+            if (externalCount >= 25) score += 10;
+        }
 
         score = Math.min(score, 100);
 
@@ -739,7 +818,7 @@ public class ScoringEngine {
         return 365;
     }
 
-    private String determineLevel(int score) {
+    String determineLevel(int score) {
         if (score >= 90) return "Elite 🏆";
         if (score >= 80) return "Expert 🏅";
         if (score >= 65) return "Advanced 🚀";

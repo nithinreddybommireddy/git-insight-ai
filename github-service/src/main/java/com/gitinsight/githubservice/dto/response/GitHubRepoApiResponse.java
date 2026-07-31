@@ -66,6 +66,27 @@ public class GitHubRepoApiResponse {
     @JsonProperty("pushed_at")
     private String pushedAt;
 
+    @JsonProperty("archived")
+    private boolean archived;
+
+    @JsonProperty("disabled")
+    private boolean disabled;
+
+    @JsonProperty("is_template")
+    private boolean isTemplate;
+
+    @JsonProperty("has_issues")
+    private boolean hasIssues;
+
+    @JsonProperty("has_wiki")
+    private boolean hasWiki;
+
+    @JsonProperty("has_projects")
+    private boolean hasProjects;
+
+    @JsonProperty("allow_forking")
+    private boolean allowForking;
+
     @Data
     public static class License {
         @JsonProperty("key")
