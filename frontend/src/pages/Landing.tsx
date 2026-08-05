@@ -180,7 +180,7 @@ export function Landing() {
       </section>
 
       {/* Stats Counter */}
-      <section className="relative mt-4 md:-mt-20 z-10 px-4">
+      <section className="relative mt-10 sm:mt-12 z-10 px-4">
         <div className="max-w-4xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}

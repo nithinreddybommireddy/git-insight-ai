@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -437,11 +437,20 @@ function InsightBlock({
 
 export function ComparePage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [user1, setUser1] = useState("");
   const [user2, setUser2] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CompareResult | null>(null);
+
+  // Prefill from URL (?user1=..&user2=..) — enables "Compare after analyze" and shareable links
+  useEffect(() => {
+    const p1 = searchParams.get("user1");
+    const p2 = searchParams.get("user2");
+    if (p1) setUser1(p1);
+    if (p2) setUser2(p2);
+  }, [searchParams]);
 
   const handleCompare = useCallback(async () => {
     const u1 = user1.trim();
@@ -458,6 +467,7 @@ export function ComparePage() {
     try {
       const compareResult = await githubApi.compare(u1, u2);
       setResult(compareResult);
+      setSearchParams({ user1: u1, user2: u2 }, { replace: true });
       if (!compareResult.user1.profile) toast.error(`Could not find user: ${u1}`);
       if (!compareResult.user2.profile) toast.error(`Could not find user: ${u2}`);
       if (compareResult.user1.profile && compareResult.user2.profile) toast.success("Comparison ready!");
@@ -466,7 +476,7 @@ export function ComparePage() {
     } finally {
       setLoading(false);
     }
-  }, [user1, user2]);
+  }, [user1, user2, setSearchParams]);
 
   const handleSwap = () => {
     setUser1(user2);

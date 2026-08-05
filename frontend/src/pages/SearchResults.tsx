@@ -34,6 +34,7 @@ import {
   X,
   Trash2,
   ExternalLink,
+  Scale,
 } from "lucide-react";
 
 const SUGGESTED_USERS = [
@@ -378,7 +379,24 @@ export function SearchResults() {
           )}
 
           {/* Profile Result */}
-          {profile && <ProfileCard profile={profile} />}
+          {profile && (
+            <div>
+              <ProfileCard profile={profile} />
+              <div className="mt-4 flex justify-center">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    navigate(`/compare?user1=${encodeURIComponent(query)}`)
+                  }
+                  className="gap-2"
+                >
+                  <Scale className="w-4 h-4" />
+                  Compare this developer with another
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Developer Score */}
           {score && (
