@@ -16,6 +16,21 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+// Surface a clear message when GitHub's rate limit is hit (HTTP 429) so pages
+// render guidance instead of a raw status text. Transient limits self-heal on
+// the backend (retry with backoff); this catches the case where the limit is
+// genuinely exhausted.
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error?.response?.status === 429 && error.response.data && typeof error.response.data === "object") {
+      error.response.data.message =
+        "GitHub API rate limit reached. Wait a minute and try again — or configure a GITHUB_TOKEN on the backend for a 5,000 requests/hour limit.";
+    }
+    return Promise.reject(error);
+  }
+);
+
 // ==================== Auth Types ====================
 
 export interface User {

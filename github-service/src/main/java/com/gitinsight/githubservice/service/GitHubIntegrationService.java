@@ -1,5 +1,6 @@
 package com.gitinsight.githubservice.service;
 
+import com.gitinsight.githubservice.config.GitHubRateLimitInterceptor;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -70,7 +71,8 @@ public class GitHubIntegrationService {
 
     public GitHubIntegrationService(
             @Value("${github.token:}") String githubToken,
-            GitHubCacheService cacheService) {
+            GitHubCacheService cacheService,
+            GitHubRateLimitInterceptor rateLimitInterceptor) {
         this.cacheService = cacheService;
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
@@ -80,6 +82,7 @@ public class GitHubIntegrationService {
         if (StringUtils.hasText(githubToken)) {
             builder.defaultHeader("Authorization", "Bearer " + githubToken);
         }
+        builder.requestInterceptor(rateLimitInterceptor);
         this.restClient = builder.build();
     }
 

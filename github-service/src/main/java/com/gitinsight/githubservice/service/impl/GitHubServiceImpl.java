@@ -1,5 +1,6 @@
 package com.gitinsight.githubservice.service.impl;
 
+import com.gitinsight.githubservice.config.GitHubRateLimitInterceptor;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.GitHubRepoApiResponse;
 import com.gitinsight.githubservice.dto.response.GitHubUserApiResponse;
@@ -26,7 +27,8 @@ public class GitHubServiceImpl implements GitHubService {
 
     private final RestClient restClient;
 
-    public GitHubServiceImpl(@Value("${github.token:}") String githubToken) {
+    public GitHubServiceImpl(@Value("${github.token:}") String githubToken,
+                             GitHubRateLimitInterceptor rateLimitInterceptor) {
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
@@ -35,6 +37,7 @@ public class GitHubServiceImpl implements GitHubService {
         if (StringUtils.hasText(githubToken)) {
             builder.defaultHeader("Authorization", "Bearer " + githubToken);
         }
+        builder.requestInterceptor(rateLimitInterceptor);
 
         this.restClient = builder.build();
     }
@@ -50,6 +53,10 @@ public class GitHubServiceImpl implements GitHubService {
                     .body(GitHubUserApiResponse.class);
         } catch (HttpClientErrorException.NotFound e) {
             throw new RuntimeException("GitHub user '" + username + "' not found.");
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
         } catch (HttpClientErrorException.Forbidden e) {
             throw new RuntimeException(
                     "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
@@ -74,6 +81,10 @@ public class GitHubServiceImpl implements GitHubService {
                     .body(new ParameterizedTypeReference<List<GitHubRepoApiResponse>>() {});
         } catch (HttpClientErrorException.NotFound e) {
             throw new RuntimeException("GitHub user '" + username + "' not found.");
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
         } catch (HttpClientErrorException.Forbidden e) {
             throw new RuntimeException(
                     "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
