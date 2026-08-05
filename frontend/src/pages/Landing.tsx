@@ -102,7 +102,7 @@ export function Landing() {
   };
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen overflow-x-clip">
       {/* Hero Section */}
       <section className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">
         <div className="absolute inset-0 animated-gradient opacity-25" />
@@ -180,12 +180,12 @@ export function Landing() {
       </section>
 
       {/* Stats Counter */}
-      <section className="relative -mt-20 z-10 px-4">
+      <section className="relative mt-4 md:-mt-20 z-10 px-4">
         <div className="max-w-4xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut", delay: 0.25 }}
             className="grid grid-cols-2 md:grid-cols-4 gap-4"
           >
             {stats.map((stat) => (
@@ -205,8 +205,8 @@ export function Landing() {
         <div className="max-w-7xl mx-auto relative z-10">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
             className="text-center mb-16"
           >
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">
@@ -222,8 +222,7 @@ export function Landing() {
           <motion.div
             variants={containerVariants}
             initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true }}
+            animate="visible"
             className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"
           >
             {features.map((feature) => (
@@ -246,8 +245,8 @@ export function Landing() {
         <div className="max-w-7xl mx-auto">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, ease: "easeOut", delay: 0.1 }}
             className="text-center mb-16"
           >
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">
@@ -263,9 +262,8 @@ export function Landing() {
               <motion.div
                 key={step.step}
                 initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: index * 0.2 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, ease: "easeOut", delay: 0.2 + index * 0.15 }}
                 className="relative"
               >
                 {index < howItWorks.length - 1 && (
@@ -291,8 +289,8 @@ export function Landing() {
         <div className="max-w-3xl mx-auto text-center relative z-10">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, ease: "easeOut" }}
           >
             <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
               <Rocket className="w-8 h-8 text-primary" />
