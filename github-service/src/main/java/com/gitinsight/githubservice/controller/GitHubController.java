@@ -2,6 +2,7 @@ package com.gitinsight.githubservice.controller;
 
 import com.gitinsight.common.dto.response.ApiResponse;
 import com.gitinsight.githubservice.dto.response.*;
+import com.gitinsight.githubservice.service.CommitDiffService;
 import com.gitinsight.githubservice.service.CommitQualityService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.*;
@@ -20,14 +21,17 @@ public class GitHubController {
     private final ScoringEngine scoringEngine;
     private final GitHubIntegrationService integrationService;
     private final CommitQualityService commitQualityService;
+    private final CommitDiffService commitDiffService;
 
     public GitHubController(GitHubService gitHubService, ScoringEngine scoringEngine,
                             GitHubIntegrationService integrationService,
-                            CommitQualityService commitQualityService) {
+                            CommitQualityService commitQualityService,
+                            CommitDiffService commitDiffService) {
         this.gitHubService = gitHubService;
         this.scoringEngine = scoringEngine;
         this.integrationService = integrationService;
         this.commitQualityService = commitQualityService;
+        this.commitDiffService = commitDiffService;
     }
 
     @GetMapping("/profile/{username}")
@@ -87,6 +91,18 @@ public class GitHubController {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
         CommitAnalyticsResponse analytics = commitQualityService.analyze(username, repos);
         return new ApiResponse<>(true, "Commit & code quality analytics calculated successfully.", analytics);
+    }
+
+    /**
+     * Phase 6 — Recent commit diffs (per-file patches) for AI code-quality review.
+     */
+    @GetMapping("/{username}/commits/diffs")
+    public ApiResponse<CommitDiffListResponse> getCommitDiffs(
+            @PathVariable String username,
+            @RequestParam(defaultValue = "15") int limit) {
+        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
+        CommitDiffListResponse diffs = commitDiffService.getRecentDiffs(username, repos, limit);
+        return new ApiResponse<>(true, "Commit diffs fetched successfully.", diffs);
     }
 
     @GetMapping("/{username}/languages")

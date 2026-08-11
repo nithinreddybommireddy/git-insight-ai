@@ -1,7 +1,10 @@
 package com.gitinsight.githubservice.service;
 
+import com.gitinsight.githubservice.dto.request.CommitDiffReviewRequest;
 import com.gitinsight.githubservice.dto.request.JobMatchRequest;
 import com.gitinsight.githubservice.dto.response.CommitAnalyticsResponse;
+import com.gitinsight.githubservice.dto.response.CommitDiffResponse;
+import com.gitinsight.githubservice.dto.response.CommitDiffReviewResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
@@ -43,6 +46,8 @@ public class GeminiService {
     private static final int MAX_OUTPUT_TOKENS = 800;
     private static final int JOB_MATCH_MAX_OUTPUT_TOKENS = 1500;
     private static final int MAX_JOB_DESCRIPTION_CHARS = 3500;
+    private static final int COMMIT_DIFF_MAX_OUTPUT_TOKENS = 2000;
+    private static final int MAX_COMMIT_DIFF_COMMITS = 3;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -163,6 +168,36 @@ public class GeminiService {
     ) {
         String prompt = buildCodeQualityPrompt(username, commitAnalytics, score);
         return callGemini(prompt, "Code Quality Review");
+    }
+
+    /**
+     * Phase 6 — AI commit-diff code-quality review: Gemini reads the actual
+     * per-file patches of a commit and returns an overall verdict plus per-file
+     * findings. Falls back to a rule-based review when no API key is configured
+     * or the response cannot be parsed.
+     */
+    public CommitDiffReviewResponse generateCommitDiffReview(CommitDiffReviewRequest request) {
+        if (!enabled) {
+            log.info("Gemini commit-diff review skipped (no API key configured)");
+            return CommitDiffReviewResponse.deterministic(request);
+        }
+        if (request == null || request.commits() == null || request.commits().isEmpty()) {
+            return CommitDiffReviewResponse.deterministic(request == null
+                    ? new CommitDiffReviewRequest("", List.of()) : request);
+        }
+        String prompt = buildCommitDiffReviewPrompt(request);
+        String raw = callGemini(prompt, "Commit Diff Review", COMMIT_DIFF_MAX_OUTPUT_TOKENS);
+        if (raw == null || raw.isBlank()) {
+            return CommitDiffReviewResponse.deterministic(request);
+        }
+        CommitDiffReviewResponse parsed = parseCommitDiffReview(raw);
+        if (parsed == null || parsed.getFileReviews() == null || parsed.getFileReviews().isEmpty()) {
+            log.info("Commit-diff review fell back to deterministic review (unparseable AI output)");
+            return CommitDiffReviewResponse.deterministic(request);
+        }
+        parsed.setAiEnabled(true);
+        parsed.setAiModel(MODEL_NAME);
+        return parsed;
     }
 
     /**
@@ -716,6 +751,122 @@ public class GeminiService {
             return (List<String>) list.stream().map(String::valueOf).collect(Collectors.toList());
         }
         return List.of();
+    }
+
+    private String buildCommitDiffReviewPrompt(CommitDiffReviewRequest request) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("""
+                You are reviewing a developer's actual code changes (commit diffs) as a senior code reviewer.
+                For each file's patch, evaluate correctness risks, code quality, security, and maintainability.
+                Base everything strictly on the patches shown — never invent code that is not present.
+                                
+                """);
+        if (request.username() != null && !request.username().isBlank()) {
+            sb.append("**Developer:** ").append(request.username()).append("\n");
+        }
+
+        List<CommitDiffResponse> commits = request.commits().stream()
+                .limit(MAX_COMMIT_DIFF_COMMITS)
+                .collect(Collectors.toList());
+        sb.append("**Commits to review:** ").append(commits.size()).append("\n\n");
+
+        for (int i = 0; i < commits.size(); i++) {
+            CommitDiffResponse c = commits.get(i);
+            sb.append("### Commit ").append(i + 1).append("\n");
+            sb.append("- sha: ").append(nz(c.getSha(), "?")).append("\n");
+            sb.append("- repo: ").append(nz(c.getRepoName(), "?")).append("\n");
+            sb.append("- message: ").append(nz(c.getMessage(), "(no message)")).append("\n");
+            sb.append("- stats: +").append(c.getAdditions()).append(" / -").append(c.getDeletions())
+                    .append(" across ").append(c.getChangedFiles()).append(" file(s)\n");
+
+            List<CommitDiffResponse.FileDiff> files = c.getFiles();
+            if (files == null || files.isEmpty()) {
+                sb.append("- files: none (merge/empty commit)\n\n");
+                continue;
+            }
+            for (CommitDiffResponse.FileDiff f : files) {
+                sb.append("\nFile: ").append(f.getFilename())
+                        .append(" [").append(nz(f.getStatus(), "modified"))
+                        .append(", +").append(f.getAdditions())
+                        .append("/-").append(f.getDeletions()).append("]\n");
+                sb.append("```diff\n");
+                sb.append(nz(f.getPatch(), "(no patch content)")).append("\n```\n");
+            }
+            sb.append("\n");
+        }
+
+        sb.append("""
+                Return STRICT JSON only (no markdown fences), matching this exact shape:
+                {
+                  "overallScore": <int 0-100>,
+                  "overallSummary": "<2-3 sentence verdict of the whole change>",
+                  "keyIssues": ["<most important problems across all files>", ...],
+                  "strengths": ["<what was done well>", ...],
+                  "recommendations": ["<actionable next steps>", ...],
+                  "fileReviews": [
+                    {
+                      "filename": "<exact filename from the diff>",
+                      "score": <int 0-100>,
+                      "summary": "<1-2 sentences about this file's change>",
+                      "issues": ["<specific issue, referencing code shown in the patch>", ...],
+                      "suggestions": ["<specific, actionable suggestion>", ...]
+                    }
+                  ]
+                }
+                Rules: one fileReviews entry per file shown; scores must be integers 0-100;
+                keep issues/suggestions specific to the actual patch content; if a patch is
+                truncated or has no content, note that limitation instead of guessing.
+                """);
+        return sb.toString();
+    }
+
+    @SuppressWarnings("unchecked")
+    private CommitDiffReviewResponse parseCommitDiffReview(String raw) {
+        try {
+            String json = raw.trim();
+            json = json.replaceFirst("^```(?:json)?\\s*", "").replaceFirst("```$", "").trim();
+            int start = json.indexOf('{');
+            int end = json.lastIndexOf('}');
+            if (start >= 0 && end > start) {
+                json = json.substring(start, end + 1);
+            }
+
+            Map<String, Object> root = OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
+            CommitDiffReviewResponse res = new CommitDiffReviewResponse();
+            res.setOverallScore(clampScore(num(root.get("overallScore"))));
+            res.setOverallSummary(nz(str(root.get("overallSummary")), ""));
+            res.setKeyIssues(strList(root.get("keyIssues")));
+            res.setStrengths(strList(root.get("strengths")));
+            res.setRecommendations(strList(root.get("recommendations")));
+
+            List<CommitDiffReviewResponse.FileReview> fileReviews = new ArrayList<>();
+            if (root.get("fileReviews") instanceof List<?> list) {
+                for (Object item : list) {
+                    if (!(item instanceof Map<?, ?> rawItem)) continue;
+                    Map<String, Object> m = (Map<String, Object>) rawItem;
+                    CommitDiffReviewResponse.FileReview fr = new CommitDiffReviewResponse.FileReview();
+                    fr.setFilename(nz(str(m.get("filename")), "unknown"));
+                    fr.setScore(clampScore(num(m.get("score"))));
+                    fr.setSummary(nz(str(m.get("summary")), ""));
+                    fr.setIssues(strList(m.get("issues")));
+                    fr.setSuggestions(strList(m.get("suggestions")));
+                    fileReviews.add(fr);
+                }
+            }
+            res.setFileReviews(fileReviews);
+            return res;
+        } catch (Exception e) {
+            log.warn("Failed to parse Gemini commit-diff review output: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private static int num(Object o) {
+        return o instanceof Number n ? n.intValue() : 0;
+    }
+
+    private static int clampScore(int score) {
+        return Math.max(0, Math.min(100, score));
     }
 
     // ═══════════════════════════════════════════════════════════════

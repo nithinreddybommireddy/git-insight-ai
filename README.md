@@ -16,7 +16,7 @@ GitInsight AI is a **Java 21 / Spring Boot microservices** platform that analyze
 
 Instead of manually reviewing repositories, commits, and contribution graphs, users get an interactive dashboard containing a **10-metric Developer Score (0–100)**, repository health, byte-weighted language stacks, **commit & code quality analysis**, AI portfolio reviews, career roadmaps, recruiter tooling, score history tracking, and PDF exportable reports.
 
-> ✅ **Phases 1–5 are implemented.** See [`docs/PHASES.md`](docs/PHASES.md) for the phase-by-phase breakdown.
+> ✅ **Phases 1–6 are implemented.** See [`docs/PHASES.md`](docs/PHASES.md) for the phase-by-phase breakdown.
 
 ---
 
@@ -78,6 +78,7 @@ github-service/src/main/java/com/gitinsight/githubservice/
 └── service/
     ├── ScoringEngine.java        # Modular 10-metric engine (see docs/SCORING-ENGINE.md)
     ├── CommitQualityService.java # Phase 5: commit message quality, conventional rate, weekly activity
+    ├── CommitDiffService.java    # Phase 6: real commit diffs (per-file patches) for AI review
     ├── GitHubIntegrationService.java  # PRs, issues, events, languages (byte-weighted), contributors
     ├── GeminiService.java        # AI prompt builders + graceful fallback
     ├── ScoreHistoryService.java  # Trend snapshots & stats
@@ -96,6 +97,7 @@ github-service/src/main/java/com/gitinsight/githubservice/
 | **Phase 3** | Gemini AI module — summaries, skills, career roadmap, interview, compare, insights | ✅ Done |
 | **Phase 4** | Reports — score history tracking, trend charts, PDF export | ✅ Done |
 | **Phase 5** | Commit & Code Quality Analysis — commit message quality, conventional-commit rate, commit size balance, weekly activity, AI code-quality review | ✅ Done |
+| **Phase 6** | Commit-Diff AI Review — fetch real per-file patches, Gemini reviews each file with per-file scores/issues/suggestions, rule-based fallback | ✅ Done |
 
 Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 
@@ -155,7 +157,7 @@ Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) �
 |----------|----------|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Services, ports, request flow, data flow |
 | [`docs/API-SPEC.md`](docs/API-SPEC.md) | Every REST endpoint across all services |
-| [`docs/PHASES.md`](docs/PHASES.md) | Phase-by-phase deliverables (1–5) |
+| [`docs/PHASES.md`](docs/PHASES.md) | Phase-by-phase deliverables (1–6) |
 | [`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md) | The 10 metrics, formulas, weights, levels, filtering rules |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Tables, indexes, relationships |
 

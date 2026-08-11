@@ -1,8 +1,10 @@
 package com.gitinsight.githubservice.controller;
 
 import com.gitinsight.common.dto.response.ApiResponse;
+import com.gitinsight.githubservice.dto.request.CommitDiffReviewRequest;
 import com.gitinsight.githubservice.dto.request.JobMatchRequest;
 import com.gitinsight.githubservice.dto.response.CommitAnalyticsResponse;
+import com.gitinsight.githubservice.dto.response.CommitDiffReviewResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
@@ -176,6 +178,16 @@ public class GeminiController {
         return new ApiResponse<>(true, "AI code quality review generated",
                 Map.of("analytics", analytics,
                        "aiReview", review != null ? review : "AI review not available"));
+    }
+
+    /**
+     * Phase 6 — AI commit-diff code-quality review (per-file).
+     * Body: {@code {username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}}
+     */
+    @PostMapping("/commit-diff-review")
+    public ApiResponse<CommitDiffReviewResponse> getCommitDiffReview(@RequestBody CommitDiffReviewRequest request) {
+        CommitDiffReviewResponse review = geminiService.generateCommitDiffReview(request);
+        return new ApiResponse<>(true, "AI commit-diff review generated", review);
     }
 
     /**

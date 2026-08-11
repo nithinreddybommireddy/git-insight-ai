@@ -1,8 +1,15 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { aiApi, type CommitAnalytics } from "@/services/api";
+import {
+  aiApi,
+  githubApiEnhanced,
+  type CommitAnalytics,
+  type CommitDiff,
+  type CommitDiffReview,
+  type CommitDiffFile,
+} from "@/services/api";
 import toast from "react-hot-toast";
 import {
   GitCommitHorizontal,
@@ -15,6 +22,11 @@ import {
   Scale,
   TrendingUp,
   AlertCircle,
+  FileDiff,
+  Download,
+  CheckCircle2,
+  AlertTriangle,
+  Lightbulb,
 } from "lucide-react";
 
 interface CommitQualityPanelProps {
@@ -62,6 +74,63 @@ function StatChip({
 export function CommitQualityPanel({ analytics, loading, username }: CommitQualityPanelProps) {
   const [aiReview, setAiReview] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [diffs, setDiffs] = useState<CommitDiff[] | null>(null);
+  const [diffsLoading, setDiffsLoading] = useState(false);
+  const [diffsError, setDiffsError] = useState<string | null>(null);
+  const [selectedSha, setSelectedSha] = useState<string>("");
+  const [diffReview, setDiffReview] = useState<CommitDiffReview | null>(null);
+  const [reviewLoading, setReviewLoading] = useState(false);
+
+  const selectedDiff = useMemo(
+    () => diffs?.find((d) => d.sha === selectedSha) ?? diffs?.[0] ?? null,
+    [diffs, selectedSha]
+  );
+
+  const handleLoadDiffs = async () => {
+    if (!username) return;
+    setDiffsLoading(true);
+    setDiffsError(null);
+    try {
+      const res = await githubApiEnhanced.getCommitDiffs(username, 15);
+      if (res.success) {
+        setDiffs(res.data.commits);
+        if (res.data.commits.length > 0) setSelectedSha(res.data.commits[0].sha);
+        setDiffReview(null);
+      } else {
+        setDiffsError(res.message || "Failed to load commit diffs");
+      }
+    } catch (err: any) {
+      setDiffsError(
+        err.response?.data?.message || err.message || "Failed to load commit diffs"
+      );
+    } finally {
+      setDiffsLoading(false);
+    }
+  };
+
+  const handleDiffReview = async () => {
+    if (!username || !selectedDiff) return;
+    setReviewLoading(true);
+    try {
+      const res = await aiApi.getCommitDiffReview({ username, commits: [selectedDiff] });
+      if (res.success) {
+        setDiffReview(res.data);
+        toast.success(
+          res.data.aiEnabled
+            ? "AI commit-diff review generated"
+            : "Rule-based diff review generated (set GEMINI_API_KEY for AI)"
+        );
+      } else {
+        toast.error(res.message || "Failed to generate commit-diff review");
+      }
+    } catch (err: any) {
+      toast.error(
+        err.response?.data?.message || err.message || "Failed to generate commit-diff review"
+      );
+    } finally {
+      setReviewLoading(false);
+    }
+  };
 
   const handleAiReview = async () => {
     if (!username) return;
@@ -372,6 +441,260 @@ export function CommitQualityPanel({ analytics, loading, username }: CommitQuali
           </Card>
         </div>
       )}
+      {/* Phase 6 — Commit-diff AI per-file review */}
+      <Card>
+        <CardContent className="!py-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center">
+                <FileDiff className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold leading-tight">Commit Diff Review</h3>
+                <p className="text-[11px] text-muted-foreground">Per-file AI code review of a recent commit's patch</p>
+              </div>
+            </div>
+            {!diffs && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleLoadDiffs}
+                disabled={diffsLoading}
+                className="gap-1.5"
+              >
+                {diffsLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                {diffsLoading ? "Loading diffs..." : "Load recent commit diffs"}
+              </Button>
+            )}
+          </div>
+
+          {diffsError && <p className="text-xs text-rose-400 mb-4">{diffsError}</p>}
+
+          {diffs && diffs.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-6">
+              No recent commit diffs available for this developer.
+            </p>
+          )}
+
+          {diffs && diffs.length > 0 && (
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground mb-1.5">Select commit</p>
+                  <select
+                    value={selectedDiff?.sha ?? ""}
+                    onChange={(e) => setSelectedSha(e.target.value)}
+                    className="w-full rounded-lg border border-border/60 bg-muted/20 px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary"
+                  >
+                    {diffs.map((d) => (
+                      <option key={d.sha} value={d.sha}>
+                        {d.repoName} · {d.sha.slice(0, 7)} — {(d.message.split("\n")[0] || "untitled").slice(0, 56)}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <p className="text-[11px] font-medium text-muted-foreground mb-1.5">
+                    Changed files ({selectedDiff?.changedFiles ?? 0})
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                    {selectedDiff?.files.map((f: CommitDiffFile) => (
+                      <span
+                        key={f.filename}
+                        className="inline-flex items-center gap-1 rounded-md bg-muted/20 border border-border/50 px-2 py-1 text-[10px]"
+                      >
+                        <span className="text-muted-foreground max-w-40 truncate">{f.filename}</span>
+                        <span className="text-emerald-400">+{f.additions}</span>
+                        <span className="text-rose-400">−{f.deletions}</span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={handleDiffReview}
+                disabled={reviewLoading || !selectedDiff}
+                className="gap-1.5"
+              >
+                {reviewLoading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Sparkles className="w-3.5 h-3.5" />
+                )}
+                {reviewLoading ? "Gemini is reviewing the diff..." : "Run AI per-file review"}
+              </Button>
+
+              {reviewLoading && (
+                <p className="text-xs text-muted-foreground animate-pulse">
+                  Reading each file's patch and checking for issues, risks, and improvements...
+                </p>
+              )}
+
+              {diffReview && !reviewLoading && (
+                <div className="space-y-4">
+                  {/* Overall verdict */}
+                  <div className="rounded-xl border border-border/60 bg-muted/10 p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div className="relative w-16 h-16 shrink-0">
+                      <svg viewBox="0 0 60 60" className="w-full h-full -rotate-90">
+                        <circle cx="30" cy="30" r="26" fill="none" strokeWidth="5" className="stroke-muted/20" />
+                        <motion.circle
+                          cx="30"
+                          cy="30"
+                          r="26"
+                          fill="none"
+                          strokeWidth="5"
+                          strokeLinecap="round"
+                          strokeDasharray={2 * Math.PI * 26}
+                          initial={{ strokeDashoffset: 2 * Math.PI * 26 }}
+                          animate={{
+                            strokeDashoffset: 2 * Math.PI * 26 * (1 - diffReview.overallScore / 100),
+                          }}
+                          transition={{ duration: 1, ease: "easeOut" }}
+                          className="stroke-[url(#cdrGradient)]"
+                        />
+                        <defs>
+                          <linearGradient id="cdrGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stopColor="#34d399" />
+                            <stop offset="100%" stopColor="#2dd4bf" />
+                          </linearGradient>
+                        </defs>
+                      </svg>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <span className={`text-base font-extrabold ${scoreText(diffReview.overallScore)}`}>
+                          {diffReview.overallScore}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-semibold">Overall Verdict</span>
+                        {!diffReview.aiEnabled && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                            Rule-based
+                          </span>
+                        )}
+                        {diffReview.aiModel && (
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            {diffReview.aiModel}
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{diffReview.overallSummary}</p>
+                    </div>
+                  </div>
+
+                  {/* Key issues + strengths + recommendations */}
+                  {diffReview.keyIssues.length > 0 && (
+                    <div className="rounded-lg bg-rose-500/5 border border-rose-500/15 p-3">
+                      <p className="text-[11px] font-semibold text-rose-400 flex items-center gap-1.5 mb-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" /> Key Issues
+                      </p>
+                      <ul className="space-y-1">
+                        {diffReview.keyIssues.map((issue, i) => (
+                          <li key={i} className="text-[11px] text-muted-foreground leading-relaxed list-disc list-inside">
+                            {issue}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {diffReview.strengths.length > 0 && (
+                    <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/15 p-3">
+                      <p className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 mb-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Strengths
+                      </p>
+                      <ul className="space-y-1">
+                        {diffReview.strengths.map((s, i) => (
+                          <li key={i} className="text-[11px] text-muted-foreground leading-relaxed list-disc list-inside">
+                            {s}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {diffReview.recommendations.length > 0 && (
+                    <div className="rounded-lg bg-amber-500/5 border border-amber-500/15 p-3">
+                      <p className="text-[11px] font-semibold text-amber-400 flex items-center gap-1.5 mb-1.5">
+                        <Lightbulb className="w-3.5 h-3.5" /> Recommendations
+                      </p>
+                      <ul className="space-y-1">
+                        {diffReview.recommendations.map((r, i) => (
+                          <li key={i} className="text-[11px] text-muted-foreground leading-relaxed list-disc list-inside">
+                            {r}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Per-file reviews */}
+                  {diffReview.fileReviews.length > 0 && (
+                    <div>
+                      <p className="text-[11px] font-semibold text-muted-foreground mb-2">Per-file findings</p>
+                      <div className="space-y-3">
+                        {diffReview.fileReviews.map((fr) => (
+                          <div key={fr.filename} className="rounded-xl border border-border/60 bg-muted/10 p-4">
+                            <div className="flex items-center justify-between gap-3 mb-2">
+                              <p className="text-xs font-semibold truncate">{fr.filename}</p>
+                              <span className={`shrink-0 text-[11px] font-bold tabular-nums ${scoreText(fr.score)}`}>
+                                {fr.score}/100
+                              </span>
+                            </div>
+                            {fr.summary && (
+                              <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{fr.summary}</p>
+                            )}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                              <div>
+                                {fr.issues.length > 0 && (
+                                  <ul className="space-y-1">
+                                    {fr.issues.map((issue, i) => (
+                                      <li
+                                        key={i}
+                                        className="text-[11px] text-rose-400/90 leading-relaxed flex gap-1.5"
+                                      >
+                                        <span className="mt-1 w-1 h-1 rounded-full bg-rose-400 shrink-0" />
+                                        {issue}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                              <div>
+                                {fr.suggestions.length > 0 && (
+                                  <ul className="space-y-1">
+                                    {fr.suggestions.map((sug, i) => (
+                                      <li
+                                        key={i}
+                                        className="text-[11px] text-amber-400/90 leading-relaxed flex gap-1.5"
+                                      >
+                                        <span className="mt-1 w-1 h-1 rounded-full bg-amber-400 shrink-0" />
+                                        {sug}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </motion.div>
   );
 }

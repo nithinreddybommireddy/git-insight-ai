@@ -38,6 +38,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/github/{username}/score` | Full 10-metric Developer Score + insights |
 | GET | `/github/{username}/insights` | Alias of score (full insights) |
 | GET | `/github/{username}/commits/analytics` | **Phase 5** commit & code quality analysis |
+| GET | `/github/{username}/commits/diffs` | **Phase 6** recent commit diffs (`limit` query param, default 15) with per-file patches, status, additions/deletions |
 | GET | `/github/{username}/commits` | Recent commits (up to 50, author-filtered) |
 | GET | `/github/{username}/organizations` | User's orgs |
 | GET | `/github/{username}/pull-requests` | PRs authored (search API) |
@@ -67,6 +68,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/ai/compare/{user1}/{user2}` | AI comparison of two developers |
 | GET | `/ai/insights/{username}` | Enhanced AI insights + score |
 | GET | `/ai/code-quality/{username}` | **Phase 5** AI code quality review + analytics |
+| POST | `/ai/commit-diff-review` | **Phase 6** Body: `{username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}` → per-file AI code review (`overallScore`, `keyIssues`, `strengths`, `recommendations`, `fileReviews[]`) with rule-based fallback when `GEMINI_API_KEY` is missing |
 | POST | `/ai/job-match` | Body: `{jobTitle, jobDescription, requiredSkills, candidates[]}` → per-candidate AI fit explanations (`enabled`, `model`, `explanations[]`) |
 
 ## github-service (8081) — `/api/reports`

@@ -434,6 +434,54 @@ export interface CommitAnalytics {
   trend: "up" | "stable" | "down";
 }
 
+// Phase 6 — Commit-diff AI review types
+
+export interface CommitDiffFile {
+  filename: string;
+  status: "added" | "modified" | "removed" | "renamed" | "copied" | string;
+  previousFilename: string | null;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch: string | null;
+}
+
+export interface CommitDiff {
+  sha: string;
+  message: string;
+  date: string;
+  repoName: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  files: CommitDiffFile[];
+}
+
+export interface CommitDiffList {
+  username: string;
+  totalCommits: number;
+  commits: CommitDiff[];
+}
+
+export interface CommitDiffFileReview {
+  filename: string;
+  score: number;
+  summary: string;
+  issues: string[];
+  suggestions: string[];
+}
+
+export interface CommitDiffReview {
+  aiEnabled: boolean;
+  aiModel: string | null;
+  overallScore: number;
+  overallSummary: string;
+  keyIssues: string[];
+  strengths: string[];
+  recommendations: string[];
+  fileReviews: CommitDiffFileReview[];
+}
+
 // ==================== Recruiter API ====================
 
 export const recruiterApi = {
@@ -564,6 +612,11 @@ export const githubApiEnhanced = {
     const { data } = await api.get<ApiResponse<CommitAnalytics>>(`/github/${username}/commits/analytics`);
     return data;
   },
+
+  getCommitDiffs: async (username: string, limit = 15): Promise<ApiResponse<CommitDiffList>> => {
+    const { data } = await api.get<ApiResponse<CommitDiffList>>(`/github/${username}/commits/diffs?limit=${limit}`);
+    return data;
+  },
 };
 
 // ==================== Gemini AI API ====================
@@ -615,6 +668,14 @@ export const aiApi = {
     const { data } = await api.get<ApiResponse<{ analytics: CommitAnalytics; aiReview: string }>>(
       `/ai/code-quality/${username}`
     );
+    return data;
+  },
+
+  getCommitDiffReview: async (request: {
+    username: string;
+    commits: CommitDiff[];
+  }): Promise<ApiResponse<CommitDiffReview>> => {
+    const { data } = await api.post<ApiResponse<CommitDiffReview>>("/ai/commit-diff-review", request);
     return data;
   },
 };

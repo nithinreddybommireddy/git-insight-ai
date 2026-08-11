@@ -84,10 +84,24 @@ Goal: analyze how a developer actually commits — beyond repo-level metadata.
 
 ---
 
+## Phase 6 — Commit-Diff AI Review ✅
+
+Goal: review the actual code a developer writes — the per-file patches of real commits — with AI.
+
+**Delivered**
+- `CommitDiffService.java` — fetches real commit diffs (`/repos/{o}/{r}/commits?author=...` then per-commit detail with `files[].patch`) for the developer's own repos, capped (8 repos, 15 commits, 12 files/commit, patches truncated at 6 KB) and cached 10 min
+- `CommitDiffResponse` / `CommitDiffListResponse` — commit metadata + per-file diff stats and truncated unified diff
+- **AI per-file review** (`/api/ai/commit-diff-review`): Gemini reads each file's patch and returns strict JSON — overall 0–100 score, verdict, key issues, strengths, recommendations, and per-file findings (score, summary, issues, suggestions)
+- **Rule-based fallback** — `CommitDiffReviewResponse.deterministic()` scores reviewability (balanced file sizes, conventional/descriptive messages) so the feature works without `GEMINI_API_KEY`
+- Frontend `CommitQualityPanel.tsx` — “Commit Diff Review” card: load recent diffs, pick a commit, run the AI review, see overall verdict + per-file findings
+
+**Endpoints**: `GET /api/github/{u}/commits/diffs?limit=15`, `POST /api/ai/commit-diff-review`
+
+---
+
 ## Backlog (future phases)
 
 - Historical trends beyond snapshots (commit-level time series)
 - Organization / team-level analytics
-- Commit-diff AI code quality evaluation (per-file review)
 - Resume parsing & interview readiness scoring
 - Docker / CI-CD / deployment automation
