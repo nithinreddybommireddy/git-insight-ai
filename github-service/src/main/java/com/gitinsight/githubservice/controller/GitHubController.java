@@ -4,10 +4,10 @@ import com.gitinsight.common.dto.response.ApiResponse;
 import com.gitinsight.githubservice.dto.response.*;
 import com.gitinsight.githubservice.service.CommitDiffService;
 import com.gitinsight.githubservice.service.CommitQualityService;
+import com.gitinsight.githubservice.service.DeveloperScoreService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.*;
 import com.gitinsight.githubservice.service.GitHubService;
-import com.gitinsight.githubservice.service.ScoringEngine;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,17 +18,18 @@ import java.util.Map;
 public class GitHubController {
 
     private final GitHubService gitHubService;
-    private final ScoringEngine scoringEngine;
+    private final DeveloperScoreService developerScoreService;
     private final GitHubIntegrationService integrationService;
     private final CommitQualityService commitQualityService;
     private final CommitDiffService commitDiffService;
 
-    public GitHubController(GitHubService gitHubService, ScoringEngine scoringEngine,
+    public GitHubController(GitHubService gitHubService,
+                            DeveloperScoreService developerScoreService,
                             GitHubIntegrationService integrationService,
                             CommitQualityService commitQualityService,
                             CommitDiffService commitDiffService) {
         this.gitHubService = gitHubService;
-        this.scoringEngine = scoringEngine;
+        this.developerScoreService = developerScoreService;
         this.integrationService = integrationService;
         this.commitQualityService = commitQualityService;
         this.commitDiffService = commitDiffService;
@@ -48,11 +49,7 @@ public class GitHubController {
 
     @GetMapping("/{username}/score")
     public ApiResponse<DeveloperScoreResponse> getDeveloperScore(@PathVariable String username) {
-        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         return new ApiResponse<>(true, "Developer score calculated successfully.", score);
     }
 
@@ -181,11 +178,7 @@ public class GitHubController {
 
     @GetMapping("/{username}/insights")
     public ApiResponse<DeveloperScoreResponse> getFullInsights(@PathVariable String username) {
-        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         return new ApiResponse<>(true, "Full developer insights calculated.", score);
     }
 }

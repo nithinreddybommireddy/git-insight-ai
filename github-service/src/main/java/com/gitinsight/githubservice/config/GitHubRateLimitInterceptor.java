@@ -18,10 +18,11 @@ import java.time.Instant;
  * Retries GitHub API calls that hit the rate limit — HTTP 429, or 403 when
  * {@code X-RateLimit-Remaining} is 0 — instead of surfacing the error to the
  * caller. Each retry waits for the reset time GitHub reports via
- * {@code Retry-After} / {@code X-RateLimit-Reset} (capped so a request thread
- * never blocks for the full hourly reset), which lets short secondary limits
- * (roughly one minute) self-heal. After the cap it returns the final response
- * so the caller can degrade gracefully.
+ * {@code Retry-After} / {@code X-RateLimit-Reset}, capped so a request thread
+ * never blocks for the full hourly reset. The cap is deliberately modest (20s)
+ * so short secondary limits (roughly one minute) mostly self-heal while a
+ * genuinely exhausted quota fails fast instead of hanging the UI. After the
+ * cap it returns the final response so the caller can degrade gracefully.
  */
 @Component
 public class GitHubRateLimitInterceptor implements ClientHttpRequestInterceptor {
@@ -31,9 +32,9 @@ public class GitHubRateLimitInterceptor implements ClientHttpRequestInterceptor 
     /** Total attempts including the initial request. */
     private static final int MAX_ATTEMPTS = 3;
     /** Never sleep longer than this on a single retry. */
-    private static final Duration MAX_WAIT = Duration.ofSeconds(60);
+    private static final Duration MAX_WAIT = Duration.ofSeconds(20);
     /** Fallback wait when GitHub provides no timing info. */
-    private static final Duration FALLBACK_WAIT = Duration.ofSeconds(10);
+    private static final Duration FALLBACK_WAIT = Duration.ofSeconds(8);
 
     @Override
     public ClientHttpResponse intercept(HttpRequest request, byte[] body,

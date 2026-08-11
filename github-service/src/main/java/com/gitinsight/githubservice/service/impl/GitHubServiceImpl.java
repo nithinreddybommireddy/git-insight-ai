@@ -5,6 +5,7 @@ import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.GitHubRepoApiResponse;
 import com.gitinsight.githubservice.dto.response.GitHubUserApiResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
+import com.gitinsight.githubservice.service.GitHubCacheService;
 import com.gitinsight.githubservice.service.GitHubService;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
@@ -24,11 +25,14 @@ import java.util.stream.Collectors;
 public class GitHubServiceImpl implements GitHubService {
 
     private static final String GITHUB_API_BASE = "https://api.github.com";
+    private static final Duration BASE_TTL = Duration.ofMinutes(5);
 
     private final RestClient restClient;
+    private final GitHubCacheService cacheService;
 
     public GitHubServiceImpl(@Value("${github.token:}") String githubToken,
-                             GitHubRateLimitInterceptor rateLimitInterceptor) {
+                             GitHubRateLimitInterceptor rateLimitInterceptor,
+                             GitHubCacheService cacheService) {
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
@@ -40,10 +44,18 @@ public class GitHubServiceImpl implements GitHubService {
         builder.requestInterceptor(rateLimitInterceptor);
 
         this.restClient = builder.build();
+        this.cacheService = cacheService;
     }
 
     @Override
     public GitHubProfileResponse getProfile(String username) {
+        // These two calls are the base of every score/AI/analytics request, so
+        // caching them removes 2 GitHub API calls from each request (and makes
+        // the 30-min full-score cache in DeveloperScoreService possible).
+        String cacheKey = "profile:" + username;
+        GitHubProfileResponse cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
         GitHubUserApiResponse apiResponse;
 
         try {
@@ -67,11 +79,17 @@ public class GitHubServiceImpl implements GitHubService {
             throw new RuntimeException("Failed to fetch profile for user: " + username);
         }
 
-        return mapToProfileResponse(apiResponse);
+        GitHubProfileResponse profile = mapToProfileResponse(apiResponse);
+        cacheService.put(cacheKey, profile, BASE_TTL);
+        return profile;
     }
 
     @Override
     public List<RepositoryResponse> getRepositories(String username) {
+        String cacheKey = "repos:" + username;
+        List<RepositoryResponse> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
         List<GitHubRepoApiResponse> apiRepos;
 
         try {
@@ -95,10 +113,12 @@ public class GitHubServiceImpl implements GitHubService {
             return List.of();
         }
 
-        return apiRepos.stream()
+        List<RepositoryResponse> repos = apiRepos.stream()
                 .map(this::mapToRepoResponse)
                 .sorted(Comparator.comparingInt(RepositoryResponse::getStars).reversed())
                 .collect(Collectors.toList());
+        cacheService.put(cacheKey, repos, BASE_TTL);
+        return repos;
     }
 
     private RepositoryResponse mapToRepoResponse(GitHubRepoApiResponse api) {

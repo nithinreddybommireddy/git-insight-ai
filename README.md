@@ -79,6 +79,7 @@ github-service/src/main/java/com/gitinsight/githubservice/
     ├── ScoringEngine.java        # Modular 10-metric engine (see docs/SCORING-ENGINE.md)
     ├── CommitQualityService.java # Phase 5: commit message quality, conventional rate, weekly activity
     ├── CommitDiffService.java    # Phase 6: real commit diffs (per-file patches) for AI review
+    ├── DeveloperScoreService.java    # Cached full score (30 min) — cuts repeat views to 0 GitHub calls
     ├── GitHubIntegrationService.java  # PRs, issues, events, languages (byte-weighted), contributors
     ├── GeminiService.java        # AI prompt builders + graceful fallback
     ├── ScoreHistoryService.java  # Trend snapshots & stats
@@ -102,6 +103,14 @@ github-service/src/main/java/com/gitinsight/githubservice/
 Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 
 ---
+
+## ⚡ Performance Notes
+
+- **Cached developer score** — `DeveloperScoreService` caches the full computed score per username for 30 min; repeat views of the same profile make **zero GitHub API calls**.
+- **Cached base data** — profile + repositories are cached 5 min, per-repo languages/contributors 1 h, so even cold score/AI requests are cheap.
+- **Parallel per-repo fetches** — language/contributor fan-out runs on Java 21 virtual threads instead of sequentially.
+- **Bounded fan-out** — enrichment caps at 15 repos (languages) / 10 repos (contributors); commit analytics at 15 repos.
+- **Fast-fail rate limits** — the 429 retry waits at most 20 s per attempt, so an exhausted quota returns a clear error instead of hanging.
 
 ## 🔑 Environment Variables
 

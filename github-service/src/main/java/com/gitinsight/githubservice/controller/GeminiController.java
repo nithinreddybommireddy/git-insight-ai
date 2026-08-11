@@ -10,10 +10,9 @@ import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.CommitQualityService;
+import com.gitinsight.githubservice.service.DeveloperScoreService;
 import com.gitinsight.githubservice.service.GeminiService;
-import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubService;
-import com.gitinsight.githubservice.service.ScoringEngine;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -25,18 +24,15 @@ public class GeminiController {
 
     private final GeminiService geminiService;
     private final GitHubService gitHubService;
-    private final ScoringEngine scoringEngine;
-    private final GitHubIntegrationService integrationService;
+    private final DeveloperScoreService developerScoreService;
     private final CommitQualityService commitQualityService;
 
     public GeminiController(GeminiService geminiService, GitHubService gitHubService,
-                            ScoringEngine scoringEngine,
-                            GitHubIntegrationService integrationService,
+                            DeveloperScoreService developerScoreService,
                             CommitQualityService commitQualityService) {
         this.geminiService = geminiService;
         this.gitHubService = gitHubService;
-        this.scoringEngine = scoringEngine;
-        this.integrationService = integrationService;
+        this.developerScoreService = developerScoreService;
         this.commitQualityService = commitQualityService;
     }
 
@@ -56,12 +52,9 @@ public class GeminiController {
      */
     @GetMapping("/summary/{username}")
     public ApiResponse<String> getDeveloperSummary(@PathVariable String username) {
-        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
-
+        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
         String summary = geminiService.generateDeveloperSummary(username, score, profile, repos);
         return new ApiResponse<>(true, "AI developer summary generated", summary);
     }
@@ -74,10 +67,7 @@ public class GeminiController {
             @PathVariable String username,
             @PathVariable String repoName) {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
 
         RepositoryResponse repo = repos.stream()
                 .filter(r -> r.getName().equalsIgnoreCase(repoName))
@@ -98,10 +88,7 @@ public class GeminiController {
     @GetMapping("/skills/{username}")
     public ApiResponse<String> getSkillAnalysis(@PathVariable String username) {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
 
         String analysis = geminiService.generateSkillAnalysis(username, score, repos);
         return new ApiResponse<>(true, "AI skill analysis generated", analysis);
@@ -112,12 +99,9 @@ public class GeminiController {
      */
     @GetMapping("/roadmap/{username}")
     public ApiResponse<String> getCareerRoadmap(@PathVariable String username) {
-        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
-
+        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
         String roadmap = geminiService.generateCareerRoadmap(username, score, profile, repos);
         return new ApiResponse<>(true, "AI career roadmap generated", roadmap);
     }
@@ -127,12 +111,8 @@ public class GeminiController {
      */
     @GetMapping("/interview/{username}")
     public ApiResponse<String> getInterviewReadiness(@PathVariable String username) {
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
-
         String assessment = geminiService.generateInterviewReadiness(username, score, repos);
         return new ApiResponse<>(true, "AI interview readiness assessment generated", assessment);
     }
@@ -144,17 +124,10 @@ public class GeminiController {
     public ApiResponse<String> getAComparison(
             @PathVariable String user1,
             @PathVariable String user2) {
-        List<RepositoryResponse> repos1 = gitHubService.getRepositories(user1);
+        DeveloperScoreResponse score1 = developerScoreService.getScore(user1);
         GitHubProfileResponse profile1 = gitHubService.getProfile(user1);
-        GitHubIntegrationService.EnrichedScoreData enriched1 = integrationService.getEnrichedScoreData(repos1);
-        DeveloperScoreResponse score1 = scoringEngine.calculate(user1, repos1, profile1,
-                enriched1.weightedLanguages(), enriched1.contributors());
-
-        List<RepositoryResponse> repos2 = gitHubService.getRepositories(user2);
+        DeveloperScoreResponse score2 = developerScoreService.getScore(user2);
         GitHubProfileResponse profile2 = gitHubService.getProfile(user2);
-        GitHubIntegrationService.EnrichedScoreData enriched2 = integrationService.getEnrichedScoreData(repos2);
-        DeveloperScoreResponse score2 = scoringEngine.calculate(user2, repos2, profile2,
-                enriched2.weightedLanguages(), enriched2.contributors());
 
         String comparison = geminiService.generateComparison(
                 user1, score1, profile1, user2, score2, profile2);
@@ -167,10 +140,7 @@ public class GeminiController {
     @GetMapping("/code-quality/{username}")
     public ApiResponse<Map<String, Object>> getCodeQualityReview(@PathVariable String username) {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
-        GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         CommitAnalyticsResponse analytics = commitQualityService.analyze(username, repos);
 
         String review = geminiService.generateCodeQualityReview(username, analytics, score);
@@ -205,11 +175,9 @@ public class GeminiController {
      */
     @GetMapping("/insights/{username}")
     public ApiResponse<Map<String, Object>> getEnhancedInsights(@PathVariable String username) {
-        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
+        DeveloperScoreResponse score = developerScoreService.getScore(username);
         GitHubProfileResponse profile = gitHubService.getProfile(username);
-        GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
-        DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+        List<RepositoryResponse> repos = gitHubService.getRepositories(username);
 
         String aiRaw = geminiService.generateEnhancedInsights(username, score, profile, repos);
 

@@ -99,6 +99,21 @@ Goal: review the actual code a developer writes — the per-file patches of real
 
 ---
 
+## Performance Pass — Caching & Parallel Fetch ✅
+
+Goal: cut GitHub API traffic and page latency for profile searches, scores, and AI reviews.
+
+**Delivered**
+- `DeveloperScoreService` — caches the fully computed score per username (30 min); repeat views = 1 cache hit, 0 GitHub calls; `getScoreFresh()` for report recording
+- Profile + repos cached 5 min in `GitHubServiceImpl` (previously uncached)
+- Per-repo language/contributor fetches now run on **Java 21 virtual threads** (parallel instead of sequential) with explicit repo caps (15 languages / 10 contributors / 15 commits)
+- Rate-limit retry cap lowered 60s → 20s so an exhausted quota fails fast instead of hanging
+- `DeveloperScoreServiceTest` verifies cache hits (compute-once semantics)
+
+**Files**: `DeveloperScoreService.java`, `GitHubServiceImpl.java`, `GitHubIntegrationService.java`, `GitHubController.java`, `GeminiController.java`, `GitHubRateLimitInterceptor.java`, `DeveloperScoreServiceTest.java`
+
+---
+
 ## Backlog (future phases)
 
 - Historical trends beyond snapshots (commit-level time series)

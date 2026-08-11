@@ -15,6 +15,9 @@ import org.springframework.web.client.RestClient;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -26,6 +29,17 @@ public class GitHubIntegrationService {
 
     private static final Logger log = LoggerFactory.getLogger(GitHubIntegrationService.class);
     private static final String GITHUB_API_BASE = "https://api.github.com";
+
+    /** Caps on per-repo fan-out: the scoring enrichment only needs a sample. */
+    private static final int MAX_LANG_REPOS = 15;
+    private static final int MAX_CONTRIBUTOR_REPOS = 10;
+    private static final int MAX_COMMIT_REPOS = 15;
+
+    /**
+     * Per-repo fetches run on virtual threads (Java 21) so N sequential GitHub
+     * round-trips collapse to roughly one; the cache itself is thread-safe.
+     */
+    private static final ExecutorService PARALLEL_FETCHER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final RestClient restClient;
     private final GitHubCacheService cacheService;
@@ -235,10 +249,13 @@ public class GitHubIntegrationService {
 
         List<GitHubCommit> allCommits = new ArrayList<>();
         int count = 0;
+        int reposChecked = 0;
 
         for (RepositoryResponse repo : repos) {
             if (count >= 50) break;
+            if (reposChecked >= MAX_COMMIT_REPOS) break;
             if (repo.isFork() || repo.isArchived()) continue;
+            reposChecked++;
 
             try {
                 List<Map<String, Object>> commits = restClient.get()
@@ -424,19 +441,27 @@ public class GitHubIntegrationService {
     // ── Byte-weighted language breakdown across the user's repos ──
 
     public List<LanguageBreakdown> getWeightedLanguageBreakdown(List<RepositoryResponse> repos) {
+        List<RepositoryResponse> effective = repos.stream()
+                .filter(r -> !r.isFork())
+                .filter(r -> !r.isArchived())
+                .sorted(Comparator.comparingInt(RepositoryResponse::getStars).reversed())
+                .limit(MAX_LANG_REPOS)
+                .collect(Collectors.toList());
+
+        // Fetch all per-repo language payloads in parallel (each is cached for 1h).
+        List<CompletableFuture<Map<String, Long>>> futures = effective.stream()
+                .map(r -> CompletableFuture.supplyAsync(() -> {
+                    String fullName = r.getFullName();
+                    if (fullName == null || !fullName.contains("/")) return Map.<String, Long>of();
+                    String[] parts = fullName.split("/", 2);
+                    return getRepositoryLanguages(parts[0], parts[1]);
+                }, PARALLEL_FETCHER))
+                .collect(Collectors.toList());
+
         Map<String, Long> byteTotals = new HashMap<>();
         Map<String, Integer> repoCounts = new HashMap<>();
-        int checked = 0;
-
-        for (RepositoryResponse r : repos) {
-            if (r.isFork() || r.isArchived()) continue;
-            if (checked >= 15) break; // cap API calls per request
-            checked++;
-
-            String fullName = r.getFullName();
-            if (fullName == null || !fullName.contains("/")) continue;
-            String[] parts = fullName.split("/", 2);
-            Map<String, Long> langs = getRepositoryLanguages(parts[0], parts[1]);
+        for (CompletableFuture<Map<String, Long>> f : futures) {
+            Map<String, Long> langs = f.join(); // individual fetches swallow errors already
             langs.forEach((lang, bytes) -> {
                 byteTotals.merge(lang, bytes, Long::sum);
                 repoCounts.merge(lang, 1, Integer::sum);
@@ -498,18 +523,26 @@ public class GitHubIntegrationService {
     // ── Aggregate contributors across the user's repos ──
 
     public List<GitHubContributor> getAggregateContributors(List<RepositoryResponse> repos) {
+        List<RepositoryResponse> effective = repos.stream()
+                .filter(r -> !r.isFork())
+                .filter(r -> !r.isArchived())
+                .sorted(Comparator.comparingInt(RepositoryResponse::getStars).reversed())
+                .limit(MAX_CONTRIBUTOR_REPOS)
+                .collect(Collectors.toList());
+
+        // Fetch all per-repo contributor payloads in parallel (each is cached for 1h).
+        List<CompletableFuture<List<GitHubContributor>>> futures = effective.stream()
+                .map(r -> CompletableFuture.supplyAsync(() -> {
+                    String fullName = r.getFullName();
+                    if (fullName == null || !fullName.contains("/")) return List.<GitHubContributor>of();
+                    String[] parts = fullName.split("/", 2);
+                    return getContributors(parts[0], parts[1]);
+                }, PARALLEL_FETCHER))
+                .collect(Collectors.toList());
+
         Map<String, int[]> totals = new HashMap<>(); // login -> [contributions, repoCount]
-        int checked = 0;
-
-        for (RepositoryResponse r : repos) {
-            if (r.isFork() || r.isArchived()) continue;
-            if (checked >= 10) break; // cap API calls per request
-            checked++;
-
-            String fullName = r.getFullName();
-            if (fullName == null || !fullName.contains("/")) continue;
-            String[] parts = fullName.split("/", 2);
-            for (GitHubContributor c : getContributors(parts[0], parts[1])) {
+        for (CompletableFuture<List<GitHubContributor>> f : futures) {
+            for (GitHubContributor c : f.join()) {
                 if (c.login() == null) continue;
                 int[] agg = totals.computeIfAbsent(c.login(), k -> new int[2]);
                 agg[0] += c.contributions();
