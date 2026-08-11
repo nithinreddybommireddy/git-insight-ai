@@ -17,6 +17,7 @@ import {
   Zap,
   Sparkles,
   CheckCircle2,
+  Building2,
 } from "lucide-react";
 
 const containerVariants = {
@@ -92,12 +93,20 @@ const stats = [
 
 export function Landing() {
   const [username, setUsername] = useState("");
+  const [orgName, setOrgName] = useState("");
   const navigate = useNavigate();
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (username.trim()) {
       navigate(`/search?q=${encodeURIComponent(username.trim())}`);
+    }
+  };
+
+  const handleOrgSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (orgName.trim()) {
+      navigate(`/org/${encodeURIComponent(orgName.trim())}`);
     }
   };
 
@@ -160,6 +169,30 @@ export function Landing() {
           <motion.p variants={itemVariants} className="mt-4 text-xs text-muted-foreground">
             Try it now &mdash; enter any public GitHub username, e.g. &quot;nithinreddybommireddy&quot;
           </motion.p>
+
+          {/* Organization search */}
+          <motion.div variants={itemVariants} className="mt-6">
+            <p className="text-[11px] text-muted-foreground mb-2 flex items-center justify-center gap-1.5">
+              <Building2 className="w-3.5 h-3.5 text-primary" />
+              Analyzing a team instead? Enter a GitHub organization:
+            </p>
+            <form onSubmit={handleOrgSearch} className="max-w-md mx-auto">
+              <div className="relative flex items-center glass rounded-xl p-1">
+                <Building2 className="w-4 h-4 ml-3 text-muted-foreground shrink-0" />
+                <Input
+                  type="text"
+                  placeholder="Organization name (e.g. vercel, facebook, google)"
+                  value={orgName}
+                  onChange={(e) => setOrgName(e.target.value)}
+                  className="flex-1 border-0 bg-transparent focus-visible:ring-0 text-sm"
+                />
+                <Button type="submit" variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-lg" disabled={!orgName.trim()}>
+                  Analyze org
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+            </form>
+          </motion.div>
 
           {/* Hero CTAs */}
           <motion.div variants={itemVariants} className="flex items-center justify-center gap-4 mt-8">

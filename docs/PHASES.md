@@ -114,9 +114,24 @@ Goal: cut GitHub API traffic and page latency for profile searches, scores, and 
 
 ---
 
+## Phase 7 — Organization / Team-Level Analytics ✅
+
+Goal: analyze a GitHub organization as a team — beyond individual developer profiles.
+
+**Delivered**
+- `OrganizationAnalyticsService` — fetches org profile (`/orgs/{login}`) + repos (`/orgs/{login}/repos?per_page=100`), reusing the cached/parallel per-repo enrichment (byte-weighted languages, top contributors)
+- `OrganizationAnalyticsResponse` — org profile, aggregated repo stats (stars, forks, avg stars, active repos in 90 days, language count), language stack, top repos, top contributors, deterministic team summary + insight
+- **AI org review** (`/api/ai/org/{org}`) — Gemini summarizes the team: overall assessment, strengths, weaknesses/risks, growth recommendations (graceful fallback without `GEMINI_API_KEY`)
+- Frontend `OrgAnalytics.tsx` at `/org/:org` — org header, stats grid, language stack bars, top contributors, top repos, team summary + AI review button; landing page org search entry
+
+**Endpoints**: `GET /api/github/org/{org}/overview`, `GET /api/ai/org/{org}`
+
+**Files**: `OrganizationAnalyticsService.java`, `OrganizationAnalyticsResponse.java`, `GeminiService.java`, `GitHubController.java`, `GeminiController.java`, `OrgAnalytics.tsx`, `OrganizationAnalyticsServiceTest.java`
+
+---
+
 ## Backlog (future phases)
 
 - Historical trends beyond snapshots (commit-level time series)
-- Organization / team-level analytics
 - Resume parsing & interview readiness scoring
 - Docker / CI-CD / deployment automation

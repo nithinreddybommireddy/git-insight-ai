@@ -54,6 +54,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/github/{owner}/{repo}/contributors` | Per-repo contributors |
 | GET | `/github/{owner}/{repo}/pulls` | Per-repo PRs (core API) |
 | GET | `/github/{owner}/{repo}/issues` | Per-repo issues (core API) |
+| GET | `/github/org/{org}/overview` | **Phase 7** organization / team-level analytics (profile, repo stats, language stack, top contributors, deterministic summary) |
 
 ## github-service (8081) — `/api/ai`
 
@@ -68,6 +69,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/ai/compare/{user1}/{user2}` | AI comparison of two developers |
 | GET | `/ai/insights/{username}` | Enhanced AI insights + score |
 | GET | `/ai/code-quality/{username}` | **Phase 5** AI code quality review + analytics |
+| GET | `/ai/org/{org}` | **Phase 7** AI organization / team review (summary, strengths, weaknesses, recommendations) |
 | POST | `/ai/commit-diff-review` | **Phase 6** Body: `{username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}` → per-file AI code review (`overallScore`, `keyIssues`, `strengths`, `recommendations`, `fileReviews[]`) with rule-based fallback when `GEMINI_API_KEY` is missing |
 | POST | `/ai/job-match` | Body: `{jobTitle, jobDescription, requiredSkills, candidates[]}` → per-candidate AI fit explanations (`enabled`, `model`, `explanations[]`) |
 

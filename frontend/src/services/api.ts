@@ -482,6 +482,46 @@ export interface CommitDiffReview {
   fileReviews: CommitDiffFileReview[];
 }
 
+// Organization / team-level analytics types
+
+export interface OrgLanguageStat {
+  language: string;
+  percentage: number;
+  repos: number;
+}
+
+export interface OrgRepoStat {
+  name: string;
+  description: string | null;
+  language: string | null;
+  stars: number;
+  forks: number;
+  pushedAt: string | null;
+}
+
+export interface OrganizationAnalytics {
+  login: string;
+  name: string | null;
+  description: string | null;
+  avatarUrl: string;
+  blog: string | null;
+  location: string | null;
+  publicRepos: number;
+  followers: number;
+  createdAt: string;
+  totalRepos: number;
+  totalStars: number;
+  totalForks: number;
+  averageStars: number;
+  languagesCount: number;
+  activeRepos: number;
+  languages: OrgLanguageStat[];
+  topRepos: OrgRepoStat[];
+  topContributors: GitHubContributor[];
+  summary: string;
+  insight: string;
+}
+
 // ==================== Recruiter API ====================
 
 export const recruiterApi = {
@@ -617,6 +657,11 @@ export const githubApiEnhanced = {
     const { data } = await api.get<ApiResponse<CommitDiffList>>(`/github/${username}/commits/diffs?limit=${limit}`);
     return data;
   },
+
+  getOrganizationOverview: async (org: string): Promise<ApiResponse<OrganizationAnalytics>> => {
+    const { data } = await api.get<ApiResponse<OrganizationAnalytics>>(`/github/org/${encodeURIComponent(org)}/overview`);
+    return data;
+  },
 };
 
 // ==================== Gemini AI API ====================
@@ -676,6 +721,11 @@ export const aiApi = {
     commits: CommitDiff[];
   }): Promise<ApiResponse<CommitDiffReview>> => {
     const { data } = await api.post<ApiResponse<CommitDiffReview>>("/ai/commit-diff-review", request);
+    return data;
+  },
+
+  getOrganizationReview: async (org: string): Promise<ApiResponse<string>> => {
+    const { data } = await api.get<ApiResponse<string>>(`/ai/org/${encodeURIComponent(org)}`);
     return data;
   },
 };

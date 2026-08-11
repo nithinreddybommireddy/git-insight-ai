@@ -8,6 +8,7 @@ import com.gitinsight.githubservice.dto.response.CommitDiffReviewResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
+import com.gitinsight.githubservice.dto.response.OrganizationAnalyticsResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -168,6 +169,15 @@ public class GeminiService {
     ) {
         String prompt = buildCodeQualityPrompt(username, commitAnalytics, score);
         return callGemini(prompt, "Code Quality Review");
+    }
+
+    /**
+     * Organization / team-level review: Gemini summarizes an org's public repos,
+     * language stack, and contributors with strengths and recommendations.
+     */
+    public String generateOrganizationReview(String login, OrganizationAnalyticsResponse org) {
+        String prompt = buildOrganizationReviewPrompt(login, org);
+        return callGemini(prompt, "Organization Review");
     }
 
     /**
@@ -650,6 +660,70 @@ public class GeminiService {
         );
     }
 
+    private String buildOrganizationReviewPrompt(String login, OrganizationAnalyticsResponse org) {
+        String languages = org.getLanguages() == null || org.getLanguages().isEmpty()
+                ? "No language data"
+                : org.getLanguages().stream()
+                        .limit(10)
+                        .map(l -> String.format("  - %s: %.1f%% (%d repos)",
+                                l.getLanguage(), l.getPercentage(), l.getRepos()))
+                        .collect(Collectors.joining("\n"));
+
+        String topRepos = org.getTopRepos() == null || org.getTopRepos().isEmpty()
+                ? "No repository data"
+                : org.getTopRepos().stream()
+                        .limit(8)
+                        .map(r -> String.format("  - %s (%s, ★%d, 🍴%d)",
+                                r.getName(), nz(r.getLanguage(), "unknown"), r.getStars(), r.getForks()))
+                        .collect(Collectors.joining("\n"));
+
+        String contributors = org.getTopContributors() == null || org.getTopContributors().isEmpty()
+                ? "No contributor data"
+                : org.getTopContributors().stream()
+                        .limit(10)
+                        .map(c -> String.format("  - %s (%d contributions)",
+                                nz(c.login(), "unknown"), c.contributions()))
+                        .collect(Collectors.joining("\n"));
+
+        return String.format("""
+                Provide a concise organization / team-level review for the GitHub organization %s (%s).
+                                
+                **Org Profile:**
+                - Name: %s
+                - Description: %s
+                - Public Repos: %d | Followers: %d | Location: %s
+                                
+                **Repository Stats (sampled):**
+                - Total Repos: %d
+                - Total Stars: %d | Total Forks: %d
+                - Average Stars per Repo: %.1f
+                - Active Repos (pushed in 90 days): %d
+                - Languages: %d
+                                
+                **Language Stack:**
+                %s
+                                
+                **Top Repositories:**
+                %s
+                                
+                **Top Contributors:**
+                %s
+                                
+                Based strictly on this data, provide:
+                1. A one-paragraph overall assessment of the team/organization
+                2. Its strongest areas (languages, activity, repo quality) with evidence
+                3. Weaknesses or risks (low activity, narrow stack, low stars)
+                4. 2-3 actionable recommendations to grow the organization's public presence
+                """,
+                login, nz(org.getName(), login),
+                nz(org.getName(), "N/A"), nz(org.getDescription(), "N/A"),
+                org.getPublicRepos(), org.getFollowers(), nz(org.getLocation(), "N/A"),
+                org.getTotalRepos(), org.getTotalStars(), org.getTotalForks(),
+                org.getAverageStars(), org.getActiveRepos(), org.getLanguagesCount(),
+                languages, topRepos, contributors
+        );
+    }
+
     private String buildJobMatchPrompt(JobMatchRequest request) {
         String candidates = request.candidates() == null || request.candidates().isEmpty()
                 ? "None provided"
@@ -901,6 +975,10 @@ public class GeminiService {
             case "Job Match" ->
                     "AI-powered job match requires a Gemini API key. " +
                     "The deterministic match engine already ranks candidates by skill fit and developer score.";
+            case "Organization Review" ->
+                    "AI-powered organization review requires a Gemini API key. " +
+                    "The organization analytics module already provides rule-based team metrics " +
+                    "(repo stats, language stack, contributors, activity).";
             default -> null;
         };
     }

@@ -17,6 +17,7 @@ import { RecruiterDashboard } from "@/pages/RecruiterDashboard";
 import { CandidateDetails } from "@/pages/CandidateDetails";
 import { AIAnalysis } from "@/pages/AIAnalysis";
 import { ReportsPage } from "@/pages/ReportsPage";
+import { OrgAnalytics } from "@/pages/OrgAnalytics";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -102,6 +103,7 @@ function AppRoutes() {
               </RequireAuth>
             }
           />
+          <Route path="/org/:orgName" element={<OrgAnalytics />} />
           <Route path="/ai" element={<AIAnalysis />} />
           <Route
             path="/reports"

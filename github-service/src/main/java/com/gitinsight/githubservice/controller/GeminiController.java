@@ -8,11 +8,13 @@ import com.gitinsight.githubservice.dto.response.CommitDiffReviewResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.JobMatchAiResponse;
+import com.gitinsight.githubservice.dto.response.OrganizationAnalyticsResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.CommitQualityService;
 import com.gitinsight.githubservice.service.DeveloperScoreService;
 import com.gitinsight.githubservice.service.GeminiService;
 import com.gitinsight.githubservice.service.GitHubService;
+import com.gitinsight.githubservice.service.OrganizationAnalyticsService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,14 +28,17 @@ public class GeminiController {
     private final GitHubService gitHubService;
     private final DeveloperScoreService developerScoreService;
     private final CommitQualityService commitQualityService;
+    private final OrganizationAnalyticsService organizationAnalyticsService;
 
     public GeminiController(GeminiService geminiService, GitHubService gitHubService,
                             DeveloperScoreService developerScoreService,
-                            CommitQualityService commitQualityService) {
+                            CommitQualityService commitQualityService,
+                            OrganizationAnalyticsService organizationAnalyticsService) {
         this.geminiService = geminiService;
         this.gitHubService = gitHubService;
         this.developerScoreService = developerScoreService;
         this.commitQualityService = commitQualityService;
+        this.organizationAnalyticsService = organizationAnalyticsService;
     }
 
     /**
@@ -148,6 +153,16 @@ public class GeminiController {
         return new ApiResponse<>(true, "AI code quality review generated",
                 Map.of("analytics", analytics,
                        "aiReview", review != null ? review : "AI review not available"));
+    }
+
+    /**
+     * Organization / team-level AI review.
+     */
+    @GetMapping("/org/{org}")
+    public ApiResponse<String> getOrganizationReview(@PathVariable String org) {
+        OrganizationAnalyticsResponse overview = organizationAnalyticsService.getOverview(org);
+        String review = geminiService.generateOrganizationReview(org, overview);
+        return new ApiResponse<>(true, "AI organization review generated", review);
     }
 
     /**

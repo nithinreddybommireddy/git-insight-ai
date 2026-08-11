@@ -8,6 +8,7 @@ import com.gitinsight.githubservice.service.DeveloperScoreService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.*;
 import com.gitinsight.githubservice.service.GitHubService;
+import com.gitinsight.githubservice.service.OrganizationAnalyticsService;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -22,17 +23,20 @@ public class GitHubController {
     private final GitHubIntegrationService integrationService;
     private final CommitQualityService commitQualityService;
     private final CommitDiffService commitDiffService;
+    private final OrganizationAnalyticsService organizationAnalyticsService;
 
     public GitHubController(GitHubService gitHubService,
                             DeveloperScoreService developerScoreService,
                             GitHubIntegrationService integrationService,
                             CommitQualityService commitQualityService,
-                            CommitDiffService commitDiffService) {
+                            CommitDiffService commitDiffService,
+                            OrganizationAnalyticsService organizationAnalyticsService) {
         this.gitHubService = gitHubService;
         this.developerScoreService = developerScoreService;
         this.integrationService = integrationService;
         this.commitQualityService = commitQualityService;
         this.commitDiffService = commitDiffService;
+        this.organizationAnalyticsService = organizationAnalyticsService;
     }
 
     @GetMapping("/profile/{username}")
@@ -180,5 +184,13 @@ public class GitHubController {
     public ApiResponse<DeveloperScoreResponse> getFullInsights(@PathVariable String username) {
         DeveloperScoreResponse score = developerScoreService.getScore(username);
         return new ApiResponse<>(true, "Full developer insights calculated.", score);
+    }
+
+    // ── Organization / team-level analytics ──
+
+    @GetMapping("/org/{org}/overview")
+    public ApiResponse<OrganizationAnalyticsResponse> getOrganizationOverview(@PathVariable String org) {
+        OrganizationAnalyticsResponse overview = organizationAnalyticsService.getOverview(org);
+        return new ApiResponse<>(true, "Organization analytics calculated successfully.", overview);
     }
 }
