@@ -1,0 +1,35 @@
+spring:
+  datasource:
+    url: jdbc:h2:mem:auth;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+  cloud:
+    discovery:
+      enabled: false
+    config:
+      enabled: false
+    compatibility-verifier:
+      enabled: false
+
+eureka:
+  client:
+    enabled: false
+    register-with-eureka: false
+    fetch-registry: false
+
+app:
+  jwt:
+    secret: integration-test-secret-key-at-least-32-bytes-long
+    expiration-ms: 3600000
+    refresh-expiration-ms: 7200000
+  oauth:
+    github:
+      client-id: test-client-id
+      client-secret: test-client-secret
+      redirect-uri: http://localhost:8083/api/auth/oauth/github/callback
+  github-service-url: http://localhost:8081
