@@ -681,9 +681,17 @@ public class GeminiService {
                 ? "No contributor data"
                 : org.getTopContributors().stream()
                         .limit(10)
-                        .map(c -> String.format("  - %s (%d contributions)",
-                                nz(c.login(), "unknown"), c.contributions()))
+                        .map(c -> String.format("  - %s (%d contributions, %.1f%% of sampled share)",
+                                nz(c.getLogin(), "unknown"), c.getContributions(), c.getContributionPercent()))
                         .collect(Collectors.joining("\n"));
+
+        String teamActivity = org.getTeamActivity() == null
+                ? "No activity data"
+                : String.format(
+                        "  - Commits: %d (30d) / %d (90d)%n  - Pull requests: %d (30d) / %d (90d)%n  - Issues: %d (30d) / %d (90d)",
+                        org.getTeamActivity().getCommits30d(), org.getTeamActivity().getCommits90d(),
+                        org.getTeamActivity().getPullRequests30d(), org.getTeamActivity().getPullRequests90d(),
+                        org.getTeamActivity().getIssues30d(), org.getTeamActivity().getIssues90d());
 
         return String.format("""
                 Provide a concise organization / team-level review for the GitHub organization %s (%s).
@@ -709,6 +717,9 @@ public class GeminiService {
                 **Top Contributors:**
                 %s
                                 
+                **Team Activity (sampled repos, 30/90-day windows):**
+                %s
+                                
                 Based strictly on this data, provide:
                 1. A one-paragraph overall assessment of the team/organization
                 2. Its strongest areas (languages, activity, repo quality) with evidence
@@ -720,7 +731,7 @@ public class GeminiService {
                 org.getPublicRepos(), org.getFollowers(), nz(org.getLocation(), "N/A"),
                 org.getTotalRepos(), org.getTotalStars(), org.getTotalForks(),
                 org.getAverageStars(), org.getActiveRepos(), org.getLanguagesCount(),
-                languages, topRepos, contributors
+                languages, topRepos, contributors, teamActivity
         );
     }
 

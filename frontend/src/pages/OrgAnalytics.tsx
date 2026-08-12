@@ -24,6 +24,12 @@ import {
   Calendar,
   RefreshCw,
   TrendingUp,
+  Archive,
+  Clock,
+  Share2,
+  GitCommit,
+  GitPullRequest,
+  CircleDot,
 } from "lucide-react";
 
 function StatChip({
@@ -45,6 +51,41 @@ function StatChip({
       <div className="min-w-0">
         <p className="text-[10px] text-muted-foreground leading-none mb-1">{label}</p>
         <p className="text-sm font-bold tabular-nums truncate">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function ActivityMetric({
+  icon: Icon,
+  label,
+  value30,
+  value90,
+  accent,
+}: {
+  icon: any;
+  label: string;
+  value30: number;
+  value90: number;
+  accent: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-muted/10 p-3.5">
+      <div className="flex items-center gap-2 mb-3">
+        <div className={`w-7 h-7 rounded-lg bg-gradient-to-br ${accent} flex items-center justify-center shrink-0`}>
+          <Icon className="w-3.5 h-3.5 text-white" />
+        </div>
+        <span className="text-xs font-semibold">{label}</span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 text-center">
+        <div className="rounded-lg bg-muted/30 py-2">
+          <p className="text-sm font-bold tabular-nums">{value30.toLocaleString()}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Last 30d</p>
+        </div>
+        <div className="rounded-lg bg-muted/30 py-2">
+          <p className="text-sm font-bold tabular-nums">{value90.toLocaleString()}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">Last 90d</p>
+        </div>
       </div>
     </div>
   );
@@ -266,6 +307,18 @@ export function OrgAnalytics() {
                 <StatChip icon={Languages} label="Languages" value={`${overview.languagesCount}`} accent="from-fuchsia-500 to-pink-500" />
               </motion.div>
 
+              {/* Repository health */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.07 }}
+                className="grid grid-cols-2 sm:grid-cols-3 gap-3"
+              >
+                <StatChip icon={Archive} label="Archived" value={`${overview.archivedRepos}`} accent="from-slate-500 to-slate-600" />
+                <StatChip icon={Clock} label="Inactive (90d)" value={`${overview.inactiveRepos}`} accent="from-orange-500 to-amber-500" />
+                <StatChip icon={Share2} label="Fork Ratio" value={`${overview.forkRatio}%`} accent="from-indigo-500 to-violet-500" />
+              </motion.div>
+
               {/* Languages + Contributors */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -319,7 +372,9 @@ export function OrgAnalytics() {
                       </div>
                       <div>
                         <h3 className="text-sm font-semibold leading-tight">Top Contributors</h3>
-                        <p className="text-[11px] text-muted-foreground">Across the org's public repos</p>
+                        <p className="text-[11px] text-muted-foreground">
+                          {overview.activeContributors} active contributors · sampled public repos
+                        </p>
                       </div>
                     </div>
                     {overview.topContributors.length === 0 ? (
@@ -327,25 +382,80 @@ export function OrgAnalytics() {
                     ) : (
                       <div className="space-y-2.5">
                         {overview.topContributors.slice(0, 10).map((c, idx) => (
-                          <div key={c.login} className="flex items-center gap-3">
-                            <span className="w-5 text-[11px] text-muted-foreground tabular-nums text-right">
-                              {idx + 1}
-                            </span>
-                            {c.avatarUrl && (
-                              <img
-                                src={c.avatarUrl}
-                                alt={c.login}
-                                className="w-7 h-7 rounded-full border border-border/60 object-cover"
-                              />
+                          <div key={c.login} className="space-y-1">
+                            <div className="flex items-center gap-3">
+                              <span className="w-5 text-[11px] text-muted-foreground tabular-nums text-right">
+                                {idx + 1}
+                              </span>
+                              {c.avatarUrl && (
+                                <img
+                                  src={c.avatarUrl}
+                                  alt={c.login}
+                                  className="w-7 h-7 rounded-full border border-border/60 object-cover"
+                                />
+                              )}
+                              <span className="text-xs font-medium truncate flex-1">{c.login}</span>
+                              <span className="text-[11px] text-muted-foreground tabular-nums">
+                                {c.contributions} commits
+                              </span>
+                              {typeof c.contributionPercent === "number" && (
+                                <span className="w-11 text-right text-[11px] font-semibold text-emerald-400/90 tabular-nums">
+                                  {c.contributionPercent.toFixed(0)}%
+                                </span>
+                              )}
+                            </div>
+                            {typeof c.contributionPercent === "number" && (
+                              <div className="ml-8 h-1 rounded-full bg-muted/30 overflow-hidden">
+                                <div
+                                  className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-400"
+                                  style={{ width: `${Math.max(c.contributionPercent, 2)}%` }}
+                                />
+                              </div>
                             )}
-                            <span className="text-xs font-medium truncate flex-1">{c.login}</span>
-                            <span className="text-[11px] text-muted-foreground tabular-nums">
-                              {c.contributions} commits
-                            </span>
                           </div>
                         ))}
                       </div>
                     )}
+                  </CardContent>
+                </Card>
+              </motion.div>
+
+              {/* Team Activity */}
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.13 }}>
+                <Card>
+                  <CardContent className="!py-6">
+                    <div className="flex items-center gap-2.5 mb-5">
+                      <div className="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-500 flex items-center justify-center">
+                        <Activity className="w-5 h-5 text-white" />
+                      </div>
+                      <div>
+                        <h3 className="text-sm font-semibold leading-tight">Team Activity</h3>
+                        <p className="text-[11px] text-muted-foreground">Commits · PRs · Issues across the top sampled repos</p>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <ActivityMetric
+                        icon={GitCommit}
+                        label="Commits"
+                        value30={overview.teamActivity.commits30d}
+                        value90={overview.teamActivity.commits90d}
+                        accent="from-emerald-500 to-teal-500"
+                      />
+                      <ActivityMetric
+                        icon={GitPullRequest}
+                        label="Pull Requests"
+                        value30={overview.teamActivity.pullRequests30d}
+                        value90={overview.teamActivity.pullRequests90d}
+                        accent="from-sky-500 to-blue-500"
+                      />
+                      <ActivityMetric
+                        icon={CircleDot}
+                        label="Issues"
+                        value30={overview.teamActivity.issues30d}
+                        value90={overview.teamActivity.issues90d}
+                        accent="from-fuchsia-500 to-purple-500"
+                      />
+                    </div>
                   </CardContent>
                 </Card>
               </motion.div>

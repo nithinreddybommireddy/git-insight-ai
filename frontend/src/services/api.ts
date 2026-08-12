@@ -374,6 +374,8 @@ export interface GitHubContributor {
   login: string;
   contributions: number;
   avatarUrl: string | null;
+  /** Present on org overview responses — share of sampled contributions (%). */
+  contributionPercent?: number;
 }
 
 export interface ContributionStats {
@@ -499,6 +501,15 @@ export interface OrgRepoStat {
   pushedAt: string | null;
 }
 
+export interface OrgTeamActivity {
+  commits30d: number;
+  commits90d: number;
+  pullRequests30d: number;
+  pullRequests90d: number;
+  issues30d: number;
+  issues90d: number;
+}
+
 export interface OrganizationAnalytics {
   login: string;
   name: string | null;
@@ -515,6 +526,11 @@ export interface OrganizationAnalytics {
   averageStars: number;
   languagesCount: number;
   activeRepos: number;
+  archivedRepos: number;
+  inactiveRepos: number;
+  forkRatio: number;
+  activeContributors: number;
+  teamActivity: OrgTeamActivity;
   languages: OrgLanguageStat[];
   topRepos: OrgRepoStat[];
   topContributors: GitHubContributor[];

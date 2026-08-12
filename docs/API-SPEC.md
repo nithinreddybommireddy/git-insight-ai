@@ -54,7 +54,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/github/{owner}/{repo}/contributors` | Per-repo contributors |
 | GET | `/github/{owner}/{repo}/pulls` | Per-repo PRs (core API) |
 | GET | `/github/{owner}/{repo}/issues` | Per-repo issues (core API) |
-| GET | `/github/org/{org}/overview` | **Phase 7** organization / team-level analytics (profile, repo stats, language stack, top contributors, deterministic summary) |
+| GET | `/github/org/{org}/overview` | **Phase 7** organization / team-level analytics — profile, repo stats, language stack, top contributors (with contribution share %), repository health (`archivedRepos`, `inactiveRepos`, `forkRatio`), team activity (`teamActivity`: commits/PRs/issues over 30d + 90d windows across the top 8 sampled repos), deterministic summary. Commits are counted by authored date; PRs/issues by GitHub's `since` (last-updated) filter |
 
 ## github-service (8081) — `/api/ai`
 
@@ -69,7 +69,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/ai/compare/{user1}/{user2}` | AI comparison of two developers |
 | GET | `/ai/insights/{username}` | Enhanced AI insights + score |
 | GET | `/ai/code-quality/{username}` | **Phase 5** AI code quality review + analytics |
-| GET | `/ai/org/{org}` | **Phase 7** AI organization / team review (summary, strengths, weaknesses, recommendations) |
+| GET | `/ai/org/{org}` | **Phase 7** AI organization / team review (summary, strengths, weaknesses, recommendations) — prompt includes repo health + team activity |
 | POST | `/ai/commit-diff-review` | **Phase 6** Body: `{username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}` → per-file AI code review (`overallScore`, `keyIssues`, `strengths`, `recommendations`, `fileReviews[]`) with rule-based fallback when `GEMINI_API_KEY` is missing |
 | POST | `/ai/job-match` | Body: `{jobTitle, jobDescription, requiredSkills, candidates[]}` → per-candidate AI fit explanations (`enabled`, `model`, `explanations[]`) |
 

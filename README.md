@@ -80,7 +80,7 @@ github-service/src/main/java/com/gitinsight/githubservice/
     ├── CommitQualityService.java # Phase 5: commit message quality, conventional rate, weekly activity
     ├── CommitDiffService.java    # Phase 6: real commit diffs (per-file patches) for AI review
     ├── DeveloperScoreService.java    # Cached full score (30 min) — cuts repeat views to 0 GitHub calls
-    ├── OrganizationAnalyticsService.java # Phase 7: org/team analytics (profile, repo stats, language stack)
+    ├── OrganizationAnalyticsService.java # Phase 7: org/team analytics (profile, repo health, languages, contributors, team activity)
     ├── GitHubIntegrationService.java  # PRs, issues, events, languages (byte-weighted), contributors
     ├── GeminiService.java        # AI prompt builders + graceful fallback
     ├── ScoreHistoryService.java  # Trend snapshots & stats
@@ -100,7 +100,7 @@ github-service/src/main/java/com/gitinsight/githubservice/
 | **Phase 4** | Reports — score history tracking, trend charts, PDF export | ✅ Done |
 | **Phase 5** | Commit & Code Quality Analysis — commit message quality, conventional-commit rate, commit size balance, weekly activity, AI code-quality review | ✅ Done |
 | **Phase 6** | Commit-Diff AI Review — fetch real per-file patches, Gemini reviews each file with per-file scores/issues/suggestions, rule-based fallback | ✅ Done |
-| **Phase 7** | Organization / Team-Level Analytics — org profile + repo stats, byte-weighted language stack, top contributors, AI team review | ✅ Done |
+| **Phase 7** | Organization / Team-Level Analytics — org profile + repo stats, repo health (archived/inactive/fork ratio), byte-weighted language stack, top contributors with share %, **team activity (commits/PRs/issues over 30/90 days)**, AI team review | ✅ Done |
 
 Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 
@@ -111,7 +111,7 @@ Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 - **Cached developer score** — `DeveloperScoreService` caches the full computed score per username for 30 min; repeat views of the same profile make **zero GitHub API calls**.
 - **Cached base data** — profile + repositories are cached 5 min, per-repo languages/contributors 1 h, so even cold score/AI requests are cheap.
 - **Parallel per-repo fetches** — language/contributor fan-out runs on Java 21 virtual threads instead of sequentially.
-- **Bounded fan-out** — enrichment caps at 15 repos (languages) / 10 repos (contributors); commit analytics at 15 repos.
+- **Bounded fan-out** — enrichment caps at 15 repos (languages) / 10 repos (contributors); commit analytics at 15 repos; org team activity at 8 repos (parallel virtual-thread fetches, best-effort).
 - **Fast-fail rate limits** — the 429 retry waits at most 20 s per attempt, so an exhausted quota returns a clear error instead of hanging.
 
 ## 🔑 Environment Variables

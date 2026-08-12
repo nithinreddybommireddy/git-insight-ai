@@ -18,6 +18,9 @@ import java.time.ZonedDateTime;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 /**
@@ -36,8 +39,17 @@ public class OrganizationAnalyticsService {
 
     private static final int MAX_REPOS = 30;          // repos considered for stats/top-repos
     private static final int MAX_TOP_REPOS = 8;
+    private static final int MAX_TEAM_ACTIVITY_REPOS = 8; // repos sampled for 30/90-day activity
+    private static final int ACTIVITY_PER_PAGE = 100;     // count cap per window per repo
     private static final Duration PROFILE_TTL = Duration.ofHours(1);
     private static final Duration OVERVIEW_TTL = Duration.ofMinutes(15);
+
+    /**
+     * Team-activity fetches (commits + PRs/issues per repo, per window) run on
+     * virtual threads so N round-trips collapse to ~1; per-repo failures degrade
+     * to zeros instead of failing the overview.
+     */
+    private static final ExecutorService PARALLEL_FETCHER = Executors.newVirtualThreadPerTaskExecutor();
 
     private final RestClient restClient;
     private final GitHubCacheService cacheService;
@@ -162,6 +174,18 @@ public class OrganizationAnalyticsService {
         res.setFollowers(num(profile.get("followers")));
         res.setCreatedAt(str(profile.get("created_at")));
 
+        // ── Repository health (over the fetched set — the 100 most-recently-pushed repos) ──
+        long archivedCount = repos.stream().filter(r -> Boolean.TRUE.equals(r.get("archived"))).count();
+        long inactiveCount = repos.stream()
+                .filter(r -> !Boolean.TRUE.equals(r.get("fork")))
+                .filter(r -> !Boolean.TRUE.equals(r.get("archived")))
+                .filter(r -> !recentlyPushed(r))
+                .count();
+        long forkCount = repos.stream().filter(r -> Boolean.TRUE.equals(r.get("fork"))).count();
+        res.setArchivedRepos((int) archivedCount);
+        res.setInactiveRepos((int) inactiveCount);
+        res.setForkRatio(repos.isEmpty() ? 0 : Math.round(forkCount * 1000.0 / repos.size()) / 10.0);
+
         // ── Effective repos (non-fork, non-archived), newest-first then by stars ──
         List<Map<String, Object>> effective = repos.stream()
                 .filter(r -> !Boolean.TRUE.equals(r.get("fork")))
@@ -223,7 +247,12 @@ public class OrganizationAnalyticsService {
                 })
                 .collect(Collectors.toList()));
         res.setLanguagesCount(res.getLanguages().size());
-        res.setTopContributors(contributors);
+        res.setTopContributors(toContributorStats(contributors));
+        res.setActiveContributors(contributors.size());
+
+        // ── Team activity (parallel, best-effort; commits authored in window,
+        //    PRs/issues last updated in window per GitHub's `since` filter) ──
+        res.setTeamActivity(fetchTeamActivity(effective));
 
         // ── Deterministic team summary ──
         res.setSummary(buildSummary(res));
@@ -253,6 +282,99 @@ public class OrganizationAnalyticsService {
         }
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // TEAM ACTIVITY (commits / PRs / issues over 30 & 90 days)
+    // ═══════════════════════════════════════════════════════════════
+
+    private OrganizationAnalyticsResponse.TeamActivity fetchTeamActivity(List<Map<String, Object>> topRepos) {
+        OrganizationAnalyticsResponse.TeamActivity total = new OrganizationAnalyticsResponse.TeamActivity();
+        List<Map<String, Object>> sampled = topRepos.stream()
+                .limit(MAX_TEAM_ACTIVITY_REPOS)
+                .collect(Collectors.toList());
+        if (sampled.isEmpty()) return total;
+
+        List<CompletableFuture<OrganizationAnalyticsResponse.TeamActivity>> futures = sampled.stream()
+                .map(r -> CompletableFuture.supplyAsync(() -> repoTeamActivity(r), PARALLEL_FETCHER))
+                .collect(Collectors.toList());
+
+        for (CompletableFuture<OrganizationAnalyticsResponse.TeamActivity> f : futures) {
+            OrganizationAnalyticsResponse.TeamActivity t = f.join(); // repoTeamActivity never throws
+            total.setCommits30d(total.getCommits30d() + t.getCommits30d());
+            total.setCommits90d(total.getCommits90d() + t.getCommits90d());
+            total.setPullRequests30d(total.getPullRequests30d() + t.getPullRequests30d());
+            total.setPullRequests90d(total.getPullRequests90d() + t.getPullRequests90d());
+            total.setIssues30d(total.getIssues30d() + t.getIssues30d());
+            total.setIssues90d(total.getIssues90d() + t.getIssues90d());
+        }
+        return total;
+    }
+
+    /**
+     * Per-repo window counts; PRs and issues are split from one {@code /issues}
+     * call (PRs appear with a {@code pull_request} key). Best-effort: any failure
+     * returns a zeroed TeamActivity so the overview still renders.
+     */
+    private OrganizationAnalyticsResponse.TeamActivity repoTeamActivity(Map<String, Object> repo) {
+        OrganizationAnalyticsResponse.TeamActivity t = new OrganizationAnalyticsResponse.TeamActivity();
+        String fullName = str(repo.get("full_name"));
+        if (fullName == null || !fullName.contains("/")) return t;
+        String[] parts = fullName.split("/", 2);
+        try {
+            t.setCommits30d(countCommitsSince(parts[0], parts[1], 30));
+            t.setCommits90d(countCommitsSince(parts[0], parts[1], 90));
+            int[] pr30 = countPrsAndIssuesSince(parts[0], parts[1], 30);
+            int[] pr90 = countPrsAndIssuesSince(parts[0], parts[1], 90);
+            t.setPullRequests30d(pr30[0]);
+            t.setIssues30d(pr30[1]);
+            t.setPullRequests90d(pr90[0]);
+            t.setIssues90d(pr90[1]);
+        } catch (Exception e) {
+            log.warn("Team activity fetch failed for {}: {}", fullName, e.getMessage());
+        }
+        return t;
+    }
+
+    private int countCommitsSince(String owner, String repo, int days) {
+        List<Map<String, Object>> commits = restClient.get()
+                .uri("/repos/{owner}/{repo}/commits?since={since}&per_page={perPage}",
+                        owner, repo, Instant.now().minus(Duration.ofDays(days)).toString(), ACTIVITY_PER_PAGE)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+        return commits == null ? 0 : commits.size();
+    }
+
+    private int[] countPrsAndIssuesSince(String owner, String repo, int days) {
+        List<Map<String, Object>> items = restClient.get()
+                .uri("/repos/{owner}/{repo}/issues?state=all&since={since}&per_page={perPage}",
+                        owner, repo, Instant.now().minus(Duration.ofDays(days)).toString(), ACTIVITY_PER_PAGE)
+                .retrieve()
+                .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
+        int prs = 0;
+        int issues = 0;
+        if (items != null) {
+            for (Map<String, Object> item : items) {
+                if (Boolean.TRUE.equals(item.get("pull_request"))) prs++;
+                else issues++;
+            }
+        }
+        return new int[]{prs, issues};
+    }
+
+    private List<OrganizationAnalyticsResponse.ContributorStat> toContributorStats(
+            List<GitHubIntegrationService.GitHubContributor> contributors) {
+        int total = contributors.stream().mapToInt(GitHubIntegrationService.GitHubContributor::contributions).sum();
+        return contributors.stream()
+                .map(c -> {
+                    OrganizationAnalyticsResponse.ContributorStat s = new OrganizationAnalyticsResponse.ContributorStat();
+                    s.setLogin(c.login());
+                    s.setContributions(c.contributions());
+                    s.setAvatarUrl(c.avatarUrl());
+                    s.setContributionPercent(total == 0 ? 0 : Math.round(c.contributions() * 1000.0 / total) / 10.0);
+                    return s;
+                })
+                .collect(Collectors.toList());
+    }
+
     private String buildSummary(OrganizationAnalyticsResponse res) {
         if (res.getTotalRepos() == 0) {
             return "No public repository data available for this organization.";
@@ -266,6 +388,12 @@ public class OrganizationAnalyticsService {
                 "%.0f%% of sampled repositories were pushed to within the last 90 days — the team is %s. ",
                 res.getTotalRepos() == 0 ? 0 : res.getActiveRepos() * 100.0 / res.getTotalRepos(),
                 res.getActiveRepos() > res.getTotalRepos() / 2 ? "actively maintained" : "less active recently"));
+        OrganizationAnalyticsResponse.TeamActivity ta = res.getTeamActivity();
+        if (ta != null && ta.getCommits30d() + ta.getPullRequests30d() + ta.getIssues30d() > 0) {
+            sb.append(String.format(
+                    "Across the top sampled repos the team logged %d commits, %d pull requests and %d issues in the last 30 days. ",
+                    ta.getCommits30d(), ta.getPullRequests30d(), ta.getIssues30d()));
+        }
         return sb.toString();
     }
 
