@@ -26,6 +26,12 @@ eureka:
   instance:
     prefer-ip-address: true
 
+app:
+  jwt:
+    # Shared signing secret from auth-service. No fallback: a service that
+    # protects endpoints with JWTs must not boot with a known/committed key.
+    secret: ${JWT_SECRET}
+
 github:
   token: ${GITHUB_TOKEN:}
 

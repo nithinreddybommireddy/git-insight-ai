@@ -12,6 +12,7 @@ import { SearchResults } from "@/pages/SearchResults";
 import { ComparePage } from "@/pages/ComparePage";
 import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
+import { OAuthCallback } from "@/pages/OAuthCallback";
 import { Dashboard } from "@/pages/Dashboard";
 import { RecruiterDashboard } from "@/pages/RecruiterDashboard";
 import { CandidateDetails } from "@/pages/CandidateDetails";
@@ -79,6 +80,7 @@ function AppRoutes() {
           <Route path="/compare" element={<ComparePage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/auth/callback" element={<OAuthCallback />} />
           <Route
             path="/dashboard"
             element={

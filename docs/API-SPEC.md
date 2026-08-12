@@ -13,6 +13,8 @@ All responses are wrapped in `ApiResponse<T>`:
 | POST | `/auth/login` | Login `{email, password}` → `{token, refreshToken, user}` |
 | POST | `/auth/refresh` | Refresh `{refreshToken}` → new tokens |
 | GET | `/auth/me` | Current user (Bearer token) |
+| GET | `/auth/oauth/github` | 302 → GitHub authorize page. Generates a random single-use `state` server-side; optional `?redirectUri=` (http/https) overrides where the browser lands after login. Requires `GITHUB_CLIENT_ID`/`GITHUB_CLIENT_SECRET` |
+| GET | `/auth/oauth/github/callback` | GitHub redirects here with `?code=&state=`. Validates the state (single-use, 10-min expiry), exchanges the code, upserts the user, then 302s to the frontend with `?token=&refreshToken=` (or `?error=`) |
 
 ## auth-service (8083) — `/api/recruiter` (roles RECRUITER/ADMIN)
 
@@ -73,7 +75,7 @@ All responses are wrapped in `ApiResponse<T>`:
 | POST | `/ai/commit-diff-review` | **Phase 6** Body: `{username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}` → per-file AI code review (`overallScore`, `keyIssues`, `strengths`, `recommendations`, `fileReviews[]`) with rule-based fallback when `GEMINI_API_KEY` is missing |
 | POST | `/ai/job-match` | Body: `{jobTitle, jobDescription, requiredSkills, candidates[]}` → per-candidate AI fit explanations (`enabled`, `model`, `explanations[]`) |
 
-## github-service (8081) — `/api/reports`
+## github-service (8081) — `/api/reports` 🔒 requires `Authorization: Bearer <JWT>`
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -83,6 +85,8 @@ All responses are wrapped in `ApiResponse<T>`:
 | GET | `/reports/all` | All snapshots |
 | GET | `/reports/stats` | totalSnapshots / uniqueUsers / averageScore |
 | GET | `/reports/generate/{username}` | Score + profile + repos + history + recorded snapshot |
+
+> The `/api/github/**` and `/api/ai/**` surfaces stay **public** (GitHub data is public by nature). `/api/ai/job-match` is public because auth-service calls it server-to-server after enforcing RECRUITER/ADMIN on `/api/recruiter/match`.
 
 ## analytics-service (8082)
 
@@ -95,6 +99,9 @@ All responses are wrapped in `ApiResponse<T>`:
 `GlobalExceptionHandler` (common module) maps:
 - `*not found*` → **404**
 - `*rate limit*` → **429**
+- invalid request bodies → **400**
 - everything else → **500**
+
+Security: unauthenticated requests to protected endpoints return **401** (JSON `ApiResponse`), denied roles return **403**.
 
 Frontend callers should always handle `success === false` and the `message` field.

@@ -120,8 +120,16 @@ Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 |----------|---------|---------|
 | `GITHUB_TOKEN` | github-service | GitHub PAT → 5,000 req/hr instead of 60. Optional but recommended |
 | `GEMINI_API_KEY` | github-service | Google Gemini key → live AI summaries/roadmaps/reviews. Falls back to templates |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | auth-service | GitHub OAuth (optional) |
-| `JWT_SECRET` | auth-service | Override default JWT signing key |
+| `JWT_SECRET` | auth-service + github-service | **Required.** Random 32+ byte key that signs JWTs in auth-service and validates them in github-service |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | auth-service | GitHub OAuth app credentials (optional — required for GitHub login) |
+| `GITHUB_OAUTH_REDIRECT_URI` | auth-service | OAuth callback URL registered in the GitHub app (default `http://localhost:8083/api/auth/oauth/github/callback`) |
+| `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | Where the browser lands after OAuth (default `http://localhost:5173/auth/callback`) |
+
+### 🔐 Security
+
+- **No committed secrets** — `JWT_SECRET` has no fallback: auth-service and github-service refuse to start without it (fail-fast instead of signing with a known key). GitHub OAuth credentials come only from the environment.
+- **JWT-protected reports** — github-service keeps the analysis/AI surface public (GitHub data is public by nature), but `GET /api/reports/all`, `GET /api/reports/stats`, and the other `/api/reports/**` endpoints require a valid auth-service JWT.
+- **OAuth CSRF protection** — GitHub login uses a random, single-use, expiring `state` token stored server-side; the callback validates it before exchanging the code. The frontend URL is never used as the state.
 
 ---
 

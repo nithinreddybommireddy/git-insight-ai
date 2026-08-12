@@ -7,6 +7,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# JWT_SECRET is required (no fallback in the app). Generate a fresh random one
+# for this run unless the developer already exported one.
+if [ -z "${JWT_SECRET:-}" ]; then
+  export JWT_SECRET="dev-$(openssl rand -hex 32)"
+  echo "JWT_SECRET not set — generated a random one for this run."
+fi
+
 # Start PostgreSQL if not running
 echo "=== Starting PostgreSQL ==="
 pg_isready -q 2>/dev/null || pg_ctlcluster 14 main start 2>/dev/null || echo "PostgreSQL already running"

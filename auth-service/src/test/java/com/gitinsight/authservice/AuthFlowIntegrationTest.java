@@ -7,19 +7,32 @@ import com.gitinsight.authservice.repository.RecruiterNoteRepository;
 import com.gitinsight.authservice.repository.SavedCandidateRepository;
 import com.gitinsight.authservice.repository.UserRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Primary;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -63,6 +76,11 @@ class AuthFlowIntegrationTest {
         recruiterNoteRepository.deleteAll();
         savedCandidateRepository.deleteAll();
         userRepository.deleteAll();
+    }
+
+    @BeforeEach
+    void resetGitHubMock() {
+        StubGitHubConfig.github.reset();
     }
 
     // ── Helpers ──
@@ -291,10 +309,103 @@ class AuthFlowIntegrationTest {
     // ── OAuth entry point (public) ──
 
     @Test
-    void githubOAuthEntryPointReturnsAuthorizeUrl() throws Exception {
-        mockMvc.perform(get("/api/auth/oauth/github"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.containsString("github.com/login/oauth/authorize")));
+    void githubOAuthEntryPointRedirectsToGitHubWithRandomState() throws Exception {
+        MvcResult result = mockMvc.perform(get("/api/auth/oauth/github"))
+                .andExpect(status().isFound())
+                .andReturn();
+        String location = result.getResponse().getHeader("Location");
+        org.assertj.core.api.Assertions.assertThat(location)
+                .isNotNull()
+                .startsWith("https://github.com/login/oauth/authorize")
+                .contains("client_id=test-client-id")
+                .contains("redirect_uri=")
+                .contains("state=");
+        // The state must be a random token — never the frontend redirect URL itself.
+        org.assertj.core.api.Assertions.assertThat(location).doesNotContain("localhost:5173");
+    }
+
+    @Test
+    void githubOAuthCallbackRejectsUnknownState() throws Exception {
+        mockMvc.perform(get("/api/auth/oauth/github/callback")
+                        .param("code", "abc123")
+                        .param("state", "forged-state"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.success").value(false));
+    }
+
+    // ── Full OAuth round trip (GitHub's token + user endpoints stubbed) ──
+
+    @Test
+    void githubOAuthFullFlowExchangesCodeUpsertsUserAndRedirectsWithTokens() throws Exception {
+        // GitHub: exchange the one-time code for an access token.
+        StubGitHubConfig.github.expect(requestTo("https://github.com/login/oauth/access_token"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED_VALUE))
+                .andRespond(withSuccess(
+                        "{\"access_token\":\"gho_test-token-123\",\"token_type\":\"bearer\",\"scope\":\"user:email,read:user\"}",
+                        MediaType.APPLICATION_JSON));
+
+        // GitHub: fetch the authenticated user's profile.
+        StubGitHubConfig.github.expect(requestTo("https://api.github.com/user"))
+                .andExpect(header(HttpHeaders.AUTHORIZATION, "Bearer gho_test-token-123"))
+                .andRespond(withSuccess(
+                        "{\"id\":999,\"login\":\"octocat\",\"name\":\"Octo Cat\",\"email\":\"octo@example.com\",\"avatar_url\":\"https://avatars.example/u.png\"}",
+                        MediaType.APPLICATION_JSON));
+
+        // 1. Entry point: 302 to GitHub with a random state.
+        MvcResult entry = mockMvc.perform(get("/api/auth/oauth/github"))
+                .andExpect(status().isFound())
+                .andReturn();
+        String authorizeUrl = entry.getResponse().getHeader("Location");
+        org.assertj.core.api.Assertions.assertThat(authorizeUrl).isNotNull();
+        String state = UriComponentsBuilder.fromUriString(authorizeUrl)
+                .build().getQueryParams().getFirst("state");
+        org.assertj.core.api.Assertions.assertThat(state).isNotBlank();
+
+        // 2. Callback with the valid state: code exchanged, user upserted, browser
+        //    redirected back to the frontend with fresh JWTs.
+        MvcResult callback = mockMvc.perform(get("/api/auth/oauth/github/callback")
+                        .param("code", "one-time-code")
+                        .param("state", state))
+                .andExpect(status().isFound())
+                .andReturn();
+        String redirect = callback.getResponse().getHeader("Location");
+        org.assertj.core.api.Assertions.assertThat(redirect)
+                .isNotNull()
+                .startsWith("http://localhost:5173/auth/callback?")
+                .contains("token=")
+                .contains("refreshToken=");
+
+        // 3. The GitHub profile was upserted into the local account store.
+        User saved = userRepository.findByGithubId(999L).orElseThrow();
+        org.assertj.core.api.Assertions.assertThat(saved.getGithubUsername()).isEqualTo("octocat");
+        org.assertj.core.api.Assertions.assertThat(saved.getEmail()).isEqualTo("octo@example.com");
+        org.assertj.core.api.Assertions.assertThat(saved.getName()).isEqualTo("Octo Cat");
+        org.assertj.core.api.Assertions.assertThat(saved.getRole()).isEqualTo(User.Role.USER);
+
+        // 4. The state is single-use: replaying the same callback is rejected.
+        mockMvc.perform(get("/api/auth/oauth/github/callback")
+                        .param("code", "one-time-code")
+                        .param("state", state))
+                .andExpect(status().isBadRequest());
+    }
+
+    /**
+     * Replaces the auto-configured {@link RestClient.Builder} with one bound to a
+     * {@link MockRestServiceServer}, so the OAuth flow's calls to GitHub's token
+     * and user endpoints can be stubbed while every other layer runs for real.
+     */
+    @TestConfiguration
+    static class StubGitHubConfig {
+
+        static MockRestServiceServer github;
+
+        @Bean
+        @Primary
+        RestClient.Builder stubGitHubRestClientBuilder() {
+            RestClient.Builder builder = RestClient.builder();
+            github = MockRestServiceServer.bindTo(builder).build();
+            return builder;
+        }
     }
 }

@@ -22,6 +22,10 @@ eureka:
     register-with-eureka: false
     fetch-registry: false
 
+app:
+  jwt:
+    secret: integration-test-secret-key-at-least-32-bytes-long
+
 github:
   token: ""
 

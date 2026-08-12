@@ -14,6 +14,8 @@ import com.gitinsight.githubservice.service.GeminiService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubService;
 import com.gitinsight.githubservice.service.OrganizationAnalyticsService;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,7 +26,9 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Date;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -186,6 +190,19 @@ class GitHubFlowIntegrationTest {
                 .thenReturn(enriched());
     }
 
+    /** Valid auth-service-style JWT signed with the test profile's JWT_SECRET. */
+    private String validToken() {
+        return Jwts.builder()
+                .subject("1")
+                .claim("email", "user@example.com")
+                .claim("role", "USER")
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 3_600_000))
+                .signWith(Keys.hmacShaKeyFor(
+                        "integration-test-secret-key-at-least-32-bytes-long".getBytes(StandardCharsets.UTF_8)))
+                .compact();
+    }
+
     // ── Health / security surface ──
 
     @Test
@@ -313,24 +330,40 @@ class GitHubFlowIntegrationTest {
                 .andExpect(jsonPath("$.success").value(false));
     }
 
-    // ── Reports (real ScoringEngine + JPA persistence) ──
+    // ── Reports (authenticated; real ScoringEngine + JPA persistence) ──
+
+    @Test
+    void reportsEndpointsRequireAuthentication() throws Exception {
+        mockMvc.perform(get("/api/reports/all"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+
+        // The public analysis surface stays open without a token.
+        stubDeveloper("anon");
+        mockMvc.perform(get("/api/github/anon/score"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true));
+    }
 
     @Test
     void reportsRecordGenerateAndHistoryPersistScores() throws Exception {
         stubDeveloper("report-dev");
 
-        mockMvc.perform(post("/api/reports/record/report-dev"))
+        mockMvc.perform(post("/api/reports/record/report-dev")
+                        .header("Authorization", "Bearer " + validToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.username").value("report-dev"))
                 .andExpect(jsonPath("$.data.overallScore").isNumber());
 
-        mockMvc.perform(get("/api/reports/history/report-dev"))
+        mockMvc.perform(get("/api/reports/history/report-dev")
+                        .header("Authorization", "Bearer " + validToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", org.hamcrest.Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].username").value("report-dev"));
 
-        mockMvc.perform(get("/api/reports/generate/report-dev"))
+        mockMvc.perform(get("/api/reports/generate/report-dev")
+                        .header("Authorization", "Bearer " + validToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.score.overallScore").isNumber())
@@ -346,7 +379,8 @@ class GitHubFlowIntegrationTest {
 
     @Test
     void latestScoreReturnsNotFoundFlagWhenNoHistory() throws Exception {
-        mockMvc.perform(get("/api/reports/latest/nobody"))
+        mockMvc.perform(get("/api/reports/latest/nobody")
+                        .header("Authorization", "Bearer " + validToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(false));
     }

@@ -32,12 +32,19 @@ eureka:
 
 app:
   jwt:
-    secret: ${JWT_SECRET:A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7R8S9T0U1V2W3X4Y5Z6A1B2C3D4E5F6G7H8}
+    # No fallback: the app must NOT boot with a known/committed signing key.
+    # Provide JWT_SECRET in the environment (32+ random bytes).
+    secret: ${JWT_SECRET}
     expiration-ms: 86400000
     refresh-expiration-ms: 2592000000
   oauth:
     github:
-      client-id: ${GITHUB_CLIENT_ID:mock-client-id}
-      client-secret: ${GITHUB_CLIENT_SECRET:mock-client-secret}
-      redirect-uri: http://localhost:8083/api/auth/oauth/github/callback
+      # Optional feature: empty until GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET are set.
+      # The OAuth endpoints return a clear error instead of using fake credentials.
+      client-id: ${GITHUB_CLIENT_ID:}
+      client-secret: ${GITHUB_CLIENT_SECRET:}
+      # Public callback URL registered in the GitHub OAuth app.
+      redirect-uri: ${GITHUB_OAUTH_REDIRECT_URI:http://localhost:8083/api/auth/oauth/github/callback}
+      # Where the browser lands after a successful login (frontend token-consumer route).
+      frontend-redirect-uri: ${OAUTH_FRONTEND_REDIRECT_URI:http://localhost:5173/auth/callback}
   github-service-url: ${GITHUB_SERVICE_URL:http://localhost:8081}
