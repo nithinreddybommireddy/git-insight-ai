@@ -77,26 +77,25 @@ public class AuthController {
 
     /**
      * GitHub OAuth entry point. Generates a random state (stored server-side
-     * against the desired post-login destination), then redirects the browser
+     * against the configured post-login destination), then redirects the browser
      * to GitHub's authorize page. The configured client credentials come from
      * the environment, never from source code.
+     *
+     * <p>The post-login destination is ALWAYS the server-configured
+     * {@code OAUTH_FRONTEND_REDIRECT_URI} — never a caller-supplied URL. Accepting
+     * a {@code redirectUri} query parameter would be an open redirect: the JWT is
+     * appended to that URL after authorization, so an attacker could exfiltrate a
+     * victim's session token by luring them through {@code ?redirectUri=https://evil.com}.
      */
     @GetMapping("/oauth/github")
-    public ResponseEntity<ApiResponse<Void>> githubOAuth(@RequestParam(required = false) String redirectUri) {
+    public ResponseEntity<ApiResponse<Void>> githubOAuth() {
         if (!oauthProperties.isConfigured()) {
             return ResponseEntity.badRequest().body(new ApiResponse<>(false,
                     "GitHub OAuth is not configured. Set GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET environment variables.",
                     null));
         }
 
-        String target = (redirectUri == null || redirectUri.isBlank())
-                ? oauthProperties.getFrontendRedirectUri()
-                : redirectUri;
-        if (!isHttpUrl(target)) {
-            return ResponseEntity.badRequest().body(new ApiResponse<>(false,
-                    "redirectUri must be an http(s) URL.", null));
-        }
-
+        String target = oauthProperties.getFrontendRedirectUri();
         String state = oauthStateStore.create(target);
         String authorizeUrl = "https://github.com/login/oauth/authorize"
                 + "?client_id=" + urlEncode(oauthProperties.getClientId())
@@ -138,10 +137,6 @@ public class AuthController {
             String location = appendQuery(target, "error=" + urlEncode(e.getMessage()));
             return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(location)).build();
         }
-    }
-
-    private static boolean isHttpUrl(String value) {
-        return value.startsWith("http://") || value.startsWith("https://");
     }
 
     private static String appendQuery(String url, String query) {
