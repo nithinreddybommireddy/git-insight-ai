@@ -56,6 +56,7 @@ GitInsight-AI/
 ├── github-service/          # Core: GitHub API client, ScoringEngine, commit quality, Gemini, reports (8081)
 ├── analytics-service/       # Developer analytics service (8082)
 ├── auth-service/            # JWT auth, roles, recruiter dashboard backend (8083)
+├── e2e-tests/               # Cross-service contract tests (auth ↔ github JWT seam)
 ├── frontend/                # React + TypeScript + Vite + Tailwind (5173)
 ├── docs/                    # Architecture, API spec, phases, scoring spec, database design
 ├── start-dev.sh             # One-shot: PG + all JARs + frontend
@@ -167,6 +168,23 @@ cd frontend && bun install && bun run dev --host 0.0.0.0 --port 5173
 Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) → explore the Developer Score, Language Stack, Top Contributors, Commit & Code Quality, and AI reviews.
 
 > ⚠️ The `github-service` JAR must be **rebuilt** after any backend change: `./mvnw clean package -DskipTests`, then restart it.
+
+## 🧪 Testing
+
+```bash
+# Run the full backend test suite (all services + e2e contract tests) from the repo ROOT
+./mvnw test
+
+# Frontend
+cd frontend && bun run build   # tsc + vite build
+cd frontend && bun run lint    # oxlint
+```
+
+| Suite | Coverage |
+|-------|----------|
+| `auth-service` | Full auth flow over the real HTTP + security + JPA stack: register → login → JWT → `/me` → refresh → role authorization → recruiter CRUD, plus the complete GitHub OAuth round trip (random state, code exchange, user upsert, token redirect, replay rejection) |
+| `github-service` | Profile/score endpoints, 30-min score caching, 404/429 mapping, org/team analytics, AI endpoints, and authenticated reports (`/api/reports/**` requires a Bearer JWT) with real score persistence |
+| `e2e-tests` | Cross-service contract: tokens minted by the **real auth-service `JwtUtil`** validate against the **real github-service `JwtUtil`** (claim names, algorithm, shared-secret derivation) — catches drift the per-service suites can't |
 
 ---
 
