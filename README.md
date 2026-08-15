@@ -1,250 +1,1096 @@
 # 🚀 GitInsight AI
 
 <p align="center">
-  <h3 align="center">AI-Powered GitHub Developer Analytics Platform</h3>
-  <p align="center">
-    Analyze GitHub profiles, compute an explainable Developer Score, review code & commit quality,
-    and empower recruiters with AI-driven analytics and PDF reports.
-  </p>
+  <strong>AI-Powered GitHub Developer Analytics & Recruitment Platform</strong>
+</p>
+
+<p align="center">
+  Analyze GitHub profiles, evaluate developer activity, generate an explainable Developer Score,
+  review code and commits with AI, and help recruiters discover and compare developers.
+</p>
+
+<p align="center">
+  Java 21 • Spring Boot • React • TypeScript • PostgreSQL • GitHub API • Gemini AI • Docker
 </p>
 
 ---
 
-## 📖 About the Project
+## 📌 Overview
 
-GitInsight AI is a **Java 21 / Spring Boot microservices** platform that analyzes GitHub profiles using the GitHub API and Google Gemini AI.
+**GitInsight AI** is an AI-powered GitHub Developer Analytics Platform built with **Java 21, Spring Boot microservices, React, PostgreSQL, GitHub API, and Google Gemini AI**.
 
-Instead of manually reviewing repositories, commits, and contribution graphs, users get an interactive dashboard containing a **10-metric Developer Score (0–100)**, repository health, byte-weighted language stacks, **commit & code quality analysis**, AI portfolio reviews, career roadmaps, recruiter tooling, score history tracking, and PDF exportable reports.
+The platform converts raw GitHub activity into meaningful developer insights.
 
-> ✅ **Phases 1–7 are implemented.** See [`docs/PHASES.md`](docs/PHASES.md) for the phase-by-phase breakdown.
+Instead of manually reviewing repositories, commits, pull requests, issues, contribution activity, and programming languages, GitInsight AI provides an interactive dashboard with:
+
+- 📊 Explainable Developer Score
+- 📈 Contribution and activity analytics
+- 💻 Repository health analysis
+- 🧑‍💻 Developer profile insights
+- 🔤 Language stack analysis
+- 📝 Commit quality analysis
+- 🔍 Commit-diff AI code review
+- 🤖 AI-generated developer summaries
+- 🎯 Skills analysis
+- 🗺️ Career roadmap generation
+- 🎤 AI interview preparation
+- 👥 Recruiter candidate management
+- ⚖️ Developer comparison
+- 🏢 Organization/team analytics
+- 📜 Score history and trends
+- 📄 PDF reports
+- 🔐 JWT authentication
+- 🐙 GitHub OAuth login
 
 ---
 
-## 🏛 High-Level Architecture
+# 🎯 Why GitInsight AI?
 
+Traditional GitHub profile review requires recruiters or developers to manually inspect:
+
+```text
+GitHub Profile
+      ↓
+Repositories
+      ↓
+Commits
+      ↓
+Pull Requests
+      ↓
+Issues
+      ↓
+Languages
+      ↓
+Contribution Activity
+      ↓
+Code Quality
+      ↓
+Manual Evaluation
 ```
-                       React + TypeScript Frontend (Vite, port 5173)
-                                      │  /api proxy
-                                      ▼
-        ┌─────────────────────────────────────────────────────────┐
-        │  Spring Cloud Microservices (Eureka registry, port 8761) │
-        │                                                         │
-        │  auth-service (8083)   github-service (8081)            │
-        │  JWT / OAuth / Roles   GitHub API + Scoring + Gemini    │
-        │  Recruiter dashboard   Reports + score history + PDF    │
-        │                                                         │
-        │  analytics-service (8082)   common (shared DTOs)        │
-        └─────────────────────────────────────────────────────────┘
+
+GitInsight AI automates this process:
+
+```text
+                GitHub Profile
+                       │
+                       ▼
+              GitHub REST API
+                       │
+                       ▼
+             Data Collection Layer
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       Repos        Commits       PRs/Issues
+          │            │            │
+          └────────────┼────────────┘
+                       ▼
+              Analytics Engine
+                       │
+                       ▼
+             Developer Score
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+      Dashboard      Gemini AI    Reports
+          │            │            │
+          └────────────┼────────────┘
+                       ▼
+             Actionable Insights
+```
+
+The goal is not simply to count GitHub activity, but to transform activity into **explainable developer insights**.
+
+---
+
+# ✨ Key Features
+
+## 📊 Developer Analytics
+
+Analyze a GitHub developer using multiple dimensions:
+
+- Developer Score
+- Contribution activity
+- Repository health
+- Programming language distribution
+- Commit activity
+- Pull requests
+- Issues
+- Repository statistics
+- Open-source activity
+- Collaboration activity
+
+---
+
+## 🏆 10-Metric Developer Score
+
+GitInsight AI calculates an explainable **0–100 Developer Score** using a modular scoring engine.
+
+The score is designed to provide a structured view of developer activity instead of relying on a single GitHub metric.
+
+```text
+GitHub Activity
+      │
+      ├── Contribution Activity
+      ├── Repository Health
+      ├── Language Analysis
+      ├── Commit Activity
+      ├── Collaboration
+      ├── Open Source Activity
+      ├── Pull Requests
+      ├── Issues
+      ├── Code Quality
+      └── Activity Recency
+                │
+                ▼
+        Scoring Engine
+                │
+                ▼
+       Developer Score
+          0 ───── 100
+```
+
+For the complete formulas, weights, filtering rules, and scoring levels:
+
+[`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md)
+
+---
+
+# 🤖 AI-Powered Developer Insights
+
+Google Gemini AI is integrated into the platform to generate intelligent insights from GitHub data.
+
+### AI capabilities include:
+
+- Developer summary
+- Skills analysis
+- Career roadmap
+- Interview preparation
+- Developer comparison
+- AI insights
+- Portfolio review
+- Code quality review
+- Commit-diff review
+- Team-level review
+
+If Gemini is unavailable, the application provides graceful fallback responses where supported.
+
+---
+
+# 🔍 Commit & Code Quality Analysis
+
+GitInsight AI goes beyond simple commit counting.
+
+The platform analyzes:
+
+- Commit message quality
+- Conventional commit usage
+- Commit size balance
+- Weekly activity
+- Commit patterns
+- Real commit diffs
+- Per-file code changes
+- Code quality issues
+- Improvement suggestions
+
+For commit-diff analysis:
+
+```text
+GitHub Commit
+      │
+      ▼
+Fetch Commit Diff
+      │
+      ▼
+Extract Changed Files
+      │
+      ▼
+Analyze Individual Patches
+      │
+      ├── Code Quality
+      ├── Potential Issues
+      ├── Suggestions
+      └── Score
+      │
+      ▼
+Gemini AI Review
+      │
+      ▼
+Developer Insights
+```
+
+---
+
+# 👥 Recruiter Module
+
+GitInsight AI also provides functionality for recruiters to manage developer candidates.
+
+Recruiter capabilities include:
+
+- Save candidates
+- Bookmark candidates
+- Add recruiter notes
+- Compare developers
+- Review developer scores
+- Analyze GitHub activity
+- Generate reports
+- View candidate analytics
+
+This allows GitHub-based developer evaluation to happen inside one platform rather than manually opening multiple GitHub profiles.
+
+---
+
+# 🏢 Organization & Team Analytics
+
+GitInsight AI supports organization-level analysis.
+
+The platform can analyze:
+
+- Organization profile
+- Repository statistics
+- Repository health
+- Archived repository ratio
+- Inactive repository ratio
+- Fork ratio
+- Language distribution
+- Top contributors
+- Contributor share
+- Team activity
+- Commit activity
+- Pull requests
+- Issues
+- AI-generated team review
+
+Team activity can be analyzed across different time periods such as:
+
+```text
+30 Days
+90 Days
+```
+
+---
+
+# 📈 Score History & Reports
+
+Developer scores can be stored over time to identify trends.
+
+Example:
+
+```text
+Score History
+
+100 ┤
+ 90 ┤                    ●
+ 80 ┤              ●─────
+ 70 ┤        ●─────
+ 60 ┤  ●─────
+ 50 ┤
+    └────────────────────────
+       Jan  Feb  Mar  Apr
+```
+
+The platform also supports:
+
+- Score history
+- Trend analysis
+- Report generation
+- PDF export
+
+---
+
+# 🔐 Authentication & Security
+
+GitInsight AI uses JWT-based authentication and role-based authorization.
+
+Supported authentication functionality includes:
+
+- User registration
+- User login
+- JWT authentication
+- Role-based authorization
+- GitHub OAuth login
+- Recruiter access control
+- Protected report endpoints
+- OAuth CSRF protection
+- Authentication rate limiting
+
+### Security highlights
+
+- No committed secrets
+- JWT secret required through environment variables
+- Minimum 32-byte JWT secret
+- GitHub OAuth credentials stored through environment variables
+- OAuth state validation
+- Single-use OAuth state
+- Expiring OAuth state
+- Authentication rate limiting
+- Protected report endpoints
+- SQL logging disabled by default
+- Actuator limited to health endpoint
+
+---
+
+# 🏗️ Architecture
+
+GitInsight AI follows a **Spring Cloud Microservices Architecture**.
+
+```text
+                         ┌─────────────────────────┐
+                         │ React + TypeScript       │
+                         │ Vite + Tailwind          │
+                         │ Port: 5173               │
+                         └────────────┬────────────┘
                                       │
-                ┌─────────────────────┴─────────────────────┐
-                ▼                                           ▼
-          PostgreSQL (gitinsight_auth / gitinsight_github)   GitHub REST API
-                                        │
-                                        ▼
-                                  Google Gemini AI
+                                      │ /api
+                                      ▼
+                         ┌─────────────────────────┐
+                         │ Spring Cloud Ecosystem  │
+                         │                         │
+                         │ Eureka Service Registry │
+                         │ Port: 8761              │
+                         └────────────┬────────────┘
+                                      │
+             ┌────────────────────────┼────────────────────────┐
+             │                        │                        │
+             ▼                        ▼                        ▼
+    ┌────────────────┐      ┌────────────────┐      ┌────────────────┐
+    │ auth-service   │      │ github-service │      │ analytics-     │
+    │ Port: 8083     │      │ Port: 8081     │      │ service        │
+    │                │      │                │      │ Port: 8082     │
+    │ JWT            │      │ GitHub API     │      │ Analytics      │
+    │ OAuth          │      │ Scoring Engine │      │                │
+    │ Roles          │      │ Gemini AI      │      │                │
+    │ Recruiters     │      │ Reports        │      │                │
+    └───────┬────────┘      └───────┬────────┘      └────────────────┘
+            │                       │
+            ▼                       ▼
+    ┌────────────────┐      ┌────────────────┐
+    │ PostgreSQL     │      │ GitHub REST API│
+    │ Auth DB        │      └───────┬────────┘
+    └────────────────┘              │
+                                    ▼
+                            ┌────────────────┐
+                            │ Google Gemini  │
+                            │ AI             │
+                            └────────────────┘
 ```
 
 ---
 
-## 📂 Project Structure
+# 🧩 Microservices
 
-```
+| Service | Port | Responsibility |
+|---|---:|---|
+| `eureka-server` | 8761 | Service discovery |
+| `github-service` | 8081 | GitHub integration, scoring, AI, reports |
+| `analytics-service` | 8082 | Developer analytics |
+| `auth-service` | 8083 | Authentication, OAuth, JWT, roles |
+| `frontend` | 5173 | React web application |
+
+---
+
+# 📂 Project Structure
+
+```text
 GitInsight-AI/
 │
-├── common/                  # Shared DTOs (ApiResponse), global exception handler
-├── eureka-server/           # Service registry (port 8761)
-├── github-service/          # Core: GitHub API client, ScoringEngine, commit quality, Gemini, reports (8081)
-├── analytics-service/       # Developer analytics service (8082)
-├── auth-service/            # JWT auth, roles, recruiter dashboard backend (8083)
-├── e2e-tests/               # Cross-service contract tests (auth ↔ github JWT seam)
-├── frontend/                # React + TypeScript + Vite + Tailwind (5173)
-├── docs/                    # Architecture, API spec, phases, scoring spec, database design
-├── start-dev.sh             # One-shot: PG + all JARs + frontend
-├── start-services.sh        # Backend-only startup
-├── mvnw                     # Maven wrapper
+├── common/
+│   └── Shared DTOs and common components
+│
+├── eureka-server/
+│   └── Service registry
+│
+├── github-service/
+│   └── GitHub API, scoring, AI, reports
+│
+├── analytics-service/
+│   └── Developer analytics
+│
+├── auth-service/
+│   └── JWT authentication, OAuth, recruiter functionality
+│
+├── e2e-tests/
+│   └── Cross-service contract tests
+│
+├── frontend/
+│   └── React + TypeScript + Vite + Tailwind
+│
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── API-SPEC.md
+│   ├── PHASES.md
+│   ├── SCORING-ENGINE.md
+│   ├── DATABASE.md
+│   ├── ENV-VARS.md
+│   ├── DEPLOYMENT.md
+│   └── LOAD-TESTING.md
+│
+├── docker/
+│   └── env.example
+│
+├── start-dev.sh
+├── start-services.sh
+├── docker-compose.yml
+├── Dockerfile
+├── mvnw
 └── README.md
 ```
 
-### github-service internals (the heart of the product)
+---
 
-```
-github-service/src/main/java/com/gitinsight/githubservice/
-├── controller/
-│   ├── GitHubController.java     # /api/github/** (profile, repos, score, commits/analytics, rate-limit …)
-│   ├── GeminiController.java     # /api/ai/** (summary, roadmap, skills, interview, code-quality …)
-│   ├── ReportsController.java    # /api/reports/** (record, history, generate)
-│   └── HealthController.java
-├── dto/response/                 # DeveloperScoreResponse, CommitAnalyticsResponse, RepositoryResponse …
-├── entity/  +  repository/       # ScoreHistory persistence
-└── service/
-    ├── ScoringEngine.java        # Modular 10-metric engine (see docs/SCORING-ENGINE.md)
-    ├── CommitQualityService.java # Phase 5: commit message quality, conventional rate, weekly activity
-    ├── CommitDiffService.java    # Phase 6: real commit diffs (per-file patches) for AI review
-    ├── DeveloperScoreService.java    # Cached full score (30 min) — cuts repeat views to 0 GitHub calls
-    ├── OrganizationAnalyticsService.java # Phase 7: org/team analytics (profile, repo health, languages, contributors, team activity)
-    ├── GitHubIntegrationService.java  # PRs, issues, events, languages (byte-weighted), contributors
-    ├── GeminiService.java        # AI prompt builders + graceful fallback
-    ├── ScoreHistoryService.java  # Trend snapshots & stats
-    ├── GitHubCacheService.java   # In-memory TTL cache (rate-limit friendly)
-    └── impl/GitHubServiceImpl.java  # Raw GitHub REST client
-```
+# 🛠️ Technology Stack
+
+## Frontend
+
+- React
+- TypeScript
+- Vite
+- Tailwind CSS
+- Axios
+- Charting / analytics UI
+
+## Backend
+
+- Java 21
+- Spring Boot
+- Spring Cloud
+- Spring Security
+- Spring Data JPA
+- Maven
+- JWT
+
+## Database
+
+- PostgreSQL
+
+## AI
+
+- Google Gemini AI
+
+## External APIs
+
+- GitHub REST API
+
+## DevOps
+
+- Docker
+- Docker Compose
+- Git
+- GitHub
+- Nginx
+
+## Testing
+
+- Spring Boot Test
+- HTTP integration tests
+- E2E contract tests
+- Frontend build and linting
+- Load testing
 
 ---
 
-## 🗓 Delivery Phases
+# 🗓️ Development Phases
 
 | Phase | Scope | Status |
-|-------|-------|--------|
-| **Phase 1** | 10-metric Developer Scoring Engine (0–100) with levels, repo filtering rules | ✅ Done |
-| **Phase 2** | Recruiter dashboard — save/bookmark candidates, notes, compare | ✅ Done |
-| **Phase 3** | Gemini AI module — summaries, skills, career roadmap, interview, compare, insights | ✅ Done |
-| **Phase 4** | Reports — score history tracking, trend charts, PDF export | ✅ Done |
-| **Phase 5** | Commit & Code Quality Analysis — commit message quality, conventional-commit rate, commit size balance, weekly activity, AI code-quality review | ✅ Done |
-| **Phase 6** | Commit-Diff AI Review — fetch real per-file patches, Gemini reviews each file with per-file scores/issues/suggestions, rule-based fallback | ✅ Done |
-| **Phase 7** | Organization / Team-Level Analytics — org profile + repo stats, repo health (archived/inactive/fork ratio), byte-weighted language stack, top contributors with share %, **team activity (commits/PRs/issues over 30/90 days)**, AI team review | ✅ Done |
+|---|---|---|
+| Phase 1 | 10-metric Developer Scoring Engine | ✅ Done |
+| Phase 2 | Recruiter Dashboard | ✅ Done |
+| Phase 3 | Gemini AI Module | ✅ Done |
+| Phase 4 | Reports & Score History | ✅ Done |
+| Phase 5 | Commit & Code Quality Analysis | ✅ Done |
+| Phase 6 | Commit-Diff AI Review | ✅ Done |
+| Phase 7 | Organization / Team Analytics | ✅ Done |
 
-Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
+Detailed breakdown:
 
----
-
-## ⚡ Performance Notes
-
-- **Cached developer score** — `DeveloperScoreService` caches the full computed score per username for 30 min; repeat views of the same profile make **zero GitHub API calls**.
-- **Cached base data** — profile + repositories are cached 5 min, per-repo languages/contributors 1 h, so even cold score/AI requests are cheap.
-- **Parallel per-repo fetches** — language/contributor fan-out runs on Java 21 virtual threads instead of sequentially.
-- **Bounded fan-out** — enrichment caps at 15 repos (languages) / 10 repos (contributors); commit analytics at 15 repos; org team activity at 8 repos (parallel virtual-thread fetches, best-effort).
-- **Fast-fail rate limits** — the 429 retry waits at most 20 s per attempt, so an exhausted quota returns a clear error instead of hanging.
-
-## 🔑 Environment Variables
-
-| Variable | Service | Purpose |
-|----------|---------|---------|
-| `GITHUB_TOKEN` | github-service | GitHub PAT → 5,000 req/hr instead of 60. Optional but recommended |
-| `GEMINI_API_KEY` | github-service | Google Gemini key → live AI summaries/roadmaps/reviews. Falls back to templates |
-| `JWT_SECRET` | auth-service + github-service | **Required.** Random 32+ byte key that signs JWTs in auth-service and validates them in github-service |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | auth-service | GitHub OAuth app credentials (optional — required for GitHub login) |
-| `GITHUB_OAUTH_REDIRECT_URI` | auth-service | OAuth callback URL registered in the GitHub app (default `http://localhost:8083/api/auth/oauth/github/callback`) |
-| `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | Where the browser lands after OAuth (default `http://localhost:5173/auth/callback`) |
-
-### 🔐 Security
-
-- **No committed secrets** — `JWT_SECRET` has no fallback: auth-service and github-service refuse to start without it (fail-fast instead of signing with a known key). GitHub OAuth credentials come only from the environment.
-- **JWT-protected reports** — github-service keeps the analysis/AI surface public (GitHub data is public by nature), but `GET /api/reports/all`, `GET /api/reports/stats`, and the other `/api/reports/**` endpoints require a valid auth-service JWT.
-- **OAuth CSRF protection** — GitHub login uses a random, single-use, expiring `state` token stored server-side; the callback validates it before exchanging the code. The frontend URL is never used as the state, and a caller-supplied `redirectUri` is ignored entirely (it would be an open redirect that exfiltrates the JWT).
-- **Brute-force guard** — `/api/auth/login` and `/api/auth/register` are rate-limited per client IP (20 req/min by default, `app.security.auth-rate-limit-per-minute`) and return 429 when exceeded.
-- **Weak-key fail-fast** — both services refuse to boot if `JWT_SECRET` is shorter than 32 bytes.
-- **No SQL logging** — `show-sql` is off by default (`SHOW_SQL=true` to enable while debugging); actuator is limited to `/actuator/health` on every service.
+[`docs/PHASES.md`](docs/PHASES.md)
 
 ---
 
-## 🚀 Running Locally
+# ⚡ Performance
 
-Prerequisites: **Java 21**, **Maven** (or `./mvnw`), **Node 20+ / Bun**, **PostgreSQL 14+**.
+GitInsight AI includes several optimizations to reduce GitHub API usage and improve response times.
+
+### Developer Score Cache
+
+The complete developer score is cached for **30 minutes**.
+
+Repeated requests for the same developer can therefore avoid additional GitHub API calls.
+
+### Base Data Cache
+
+Cached data includes:
+
+- Profile
+- Repositories
+- Repository languages
+- Contributors
+
+### Parallel Processing
+
+Per-repository enrichment uses **Java 21 virtual threads** for parallel processing.
+
+### Bounded API Fan-Out
+
+The system limits repository enrichment to avoid excessive GitHub API usage.
+
+### Rate-Limit Handling
+
+GitHub API `429` responses are handled with bounded retry behavior.
+
+---
+
+# 🔑 Environment Variables
+
+Create the required environment variables before starting the application.
+
+| Variable | Service | Required | Purpose |
+|---|---|---|---|
+| `GITHUB_TOKEN` | github-service | Optional | GitHub API authentication |
+| `GEMINI_API_KEY` | github-service | Optional | Gemini AI |
+| `JWT_SECRET` | auth + github | **Yes** | JWT signing/validation |
+| `GITHUB_CLIENT_ID` | auth-service | OAuth only | GitHub OAuth |
+| `GITHUB_CLIENT_SECRET` | auth-service | OAuth only | GitHub OAuth |
+| `GITHUB_OAUTH_REDIRECT_URI` | auth-service | OAuth only | OAuth callback |
+| `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | OAuth only | Frontend OAuth redirect |
+
+Example:
+
+```env
+GITHUB_TOKEN=your_github_token
+GEMINI_API_KEY=your_gemini_api_key
+
+JWT_SECRET=your_random_32_byte_or_longer_secret
+
+GITHUB_CLIENT_ID=your_github_client_id
+GITHUB_CLIENT_SECRET=your_github_client_secret
+
+GITHUB_OAUTH_REDIRECT_URI=http://localhost:8083/api/auth/oauth/github/callback
+OAUTH_FRONTEND_REDIRECT_URI=http://localhost:5173/auth/callback
+```
+
+> ⚠️ Never commit `.env` files, API keys, JWT secrets, or OAuth secrets to GitHub.
+
+---
+
+# 🚀 Running Locally
+
+## Prerequisites
+
+Install:
+
+- Java 21
+- Maven or Maven Wrapper
+- Node.js 20+ / Bun
+- PostgreSQL 14+
+- Git
+
+---
+
+## 1. Clone the Repository
 
 ```bash
-# 1. Create databases (skip if you already created them)
+git clone https://github.com/<your-username>/GitInsight-AI.git
+
+cd GitInsight-AI
+```
+
+---
+
+## 2. Create PostgreSQL Databases
+
+```bash
 sudo -u postgres createdb gitinsight_auth
 sudo -u postgres createdb gitinsight_github
 sudo -u postgres createdb gitinsight_analytics
+```
 
-# 2. Build everything (including the common module) — run from the repo ROOT
+If you are using Windows, create the databases through PostgreSQL/pgAdmin instead.
+
+---
+
+## 3. Configure Environment Variables
+
+Configure the required variables described in the **Environment Variables** section.
+
+---
+
+## 4. Build the Backend
+
+Run this command from the repository root:
+
+```bash
 ./mvnw clean package -DskipTests
+```
 
-# 3. Start the full stack (PostgreSQL + Eureka + all services + frontend)
+On Windows:
+
+```bash
+mvnw.cmd clean package -DskipTests
+```
+
+---
+
+## 5. Start the Full Stack
+
+```bash
 ./start-dev.sh
 ```
 
-Or start services manually:
+The application will start:
 
-```bash
-# Terminal A — Eureka
-java -jar eureka-server/target/eureka-server-*-exec.jar
-
-# Terminal B — backends (order matters: Eureka first)
-java -jar auth-service/target/auth-service-*-exec.jar       # 8083
-java -jar analytics-service/target/analytics-service-*-exec.jar  # 8082
-java -jar github-service/target/github-service-*-exec.jar   # 8081
-
-# Terminal C — frontend
-cd frontend && bun install && bun run dev --host 0.0.0.0 --port 5173
+```text
+Frontend       → http://localhost:5173
+Eureka         → http://localhost:8761
+GitHub Service → http://localhost:8081
+Analytics      → http://localhost:8082
+Auth Service   → http://localhost:8083
+PostgreSQL     → localhost:5432
 ```
 
-Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) → explore the Developer Score, Language Stack, Top Contributors, Commit & Code Quality, and AI reviews.
+---
 
-> ⚠️ The `github-service` JAR must be **rebuilt** after any backend change: `./mvnw clean package -DskipTests`, then restart it.
+# ▶️ Manual Startup
 
-## 🐳 Docker (full stack)
+If you want to start each service individually:
 
-The repo ships a root `Dockerfile` (multi-stage: one Maven build, one slim runtime image per service) plus a `docker-compose.yml` that wires **PostgreSQL + Eureka + all 3 services + the frontend (nginx)** together.
+### Terminal 1 — Eureka
 
 ```bash
-# 1. Configure env (JWT_SECRET is REQUIRED; see docker/env.example)
-cp docker/env.example .env
-#    edit .env and set JWT_SECRET=$(openssl rand -hex 32) — and GITHUB_TOKEN if you have one
+java -jar eureka-server/target/eureka-server-*-exec.jar
+```
 
-# 2. Build + start the whole stack (from the repo root)
+### Terminal 2 — Auth Service
+
+```bash
+java -jar auth-service/target/auth-service-*-exec.jar
+```
+
+### Terminal 3 — Analytics Service
+
+```bash
+java -jar analytics-service/target/analytics-service-*-exec.jar
+```
+
+### Terminal 4 — GitHub Service
+
+```bash
+java -jar github-service/target/github-service-*-exec.jar
+```
+
+### Terminal 5 — Frontend
+
+```bash
+cd frontend
+
+bun install
+
+bun run dev --host 0.0.0.0 --port 5173
+```
+
+---
+
+# 🐳 Docker
+
+GitInsight AI includes Docker support for running the complete stack.
+
+The Docker setup contains:
+
+```text
+PostgreSQL
+    +
+Eureka
+    +
+Auth Service
+    +
+GitHub Service
+    +
+Analytics Service
+    +
+Frontend / Nginx
+```
+
+## Configure Environment
+
+```bash
+cp docker/env.example .env
+```
+
+Edit `.env` and configure the required values.
+
+For example:
+
+```env
+JWT_SECRET=your_secure_secret
+GITHUB_TOKEN=your_github_token
+GEMINI_API_KEY=your_gemini_api_key
+```
+
+---
+
+## Start Docker Stack
+
+```bash
 docker compose up --build
 ```
 
-| URL | Service |
-|-----|---------|
-| http://localhost:5173 | Frontend (nginx, SPA + `/api` proxy) |
-| http://localhost:8761 | Eureka dashboard |
-| http://localhost:8081 | github-service |
-| http://localhost:8082 | analytics-service |
-| http://localhost:8083 | auth-service |
-| localhost:5432 | PostgreSQL (`gitinsight_auth` / `gitinsight_github` / `gitinsight_analytics`) |
+---
+
+## Stop Docker Stack
 
 ```bash
-docker compose logs -f github-service   # follow one service
-docker compose down                      # stop (keep the DB volume)
-docker compose down -v                   # stop and wipe the database
+docker compose down
 ```
 
-## 🧪 Testing
+Stop and remove the database volume:
 
 ```bash
-# Run the full backend test suite (all services + e2e contract tests) from the repo ROOT
+docker compose down -v
+```
+
+View GitHub service logs:
+
+```bash
+docker compose logs -f github-service
+```
+
+---
+
+# 🌐 Application URLs
+
+| URL | Service |
+|---|---|
+| http://localhost:5173 | Frontend |
+| http://localhost:8761 | Eureka Dashboard |
+| http://localhost:8081 | GitHub Service |
+| http://localhost:8082 | Analytics Service |
+| http://localhost:8083 | Auth Service |
+| localhost:5432 | PostgreSQL |
+
+---
+
+# 🧪 Testing
+
+## Backend
+
+Run the complete backend test suite:
+
+```bash
 ./mvnw test
+```
 
-# Frontend
-cd frontend && bun run build   # tsc + vite build
-cd frontend && bun run lint    # oxlint
+---
 
-# Load test (against a running stack — see docs/LOAD-TESTING.md)
+## Frontend Build
+
+```bash
+cd frontend
+
+bun run build
+```
+
+---
+
+## Frontend Lint
+
+```bash
+cd frontend
+
+bun run lint
+```
+
+---
+
+## Load Testing
+
+Against a running application:
+
+```bash
 node scripts/load-test.mjs
 ```
 
-| Suite | Coverage |
-|-------|----------|
-| `auth-service` | Full auth flow over the real HTTP + security + JPA stack: register → login → JWT → `/me` → refresh → role authorization → recruiter CRUD, plus the complete GitHub OAuth round trip (random state, code exchange, user upsert, token redirect, replay rejection) |
-| `github-service` | Profile/score endpoints, 30-min score caching, 404/429 mapping, org/team analytics, AI endpoints, and authenticated reports (`/api/reports/**` requires a Bearer JWT) with real score persistence |
-| `e2e-tests` | Cross-service contract: tokens minted by the **real auth-service `JwtUtil`** validate against the **real github-service `JwtUtil`** (claim names, algorithm, shared-secret derivation) — catches drift the per-service suites can't |
+Detailed information:
 
-## 🚀 Deployment
-
-- **Full stack (Docker Compose)** — one command on any container host: PostgreSQL + Eureka + all services + nginx frontend. See the Docker section above and `docs/DEPLOYMENT.md`.
-- **Static frontend + containerized backend** — `VITE_API_BASE` + `CORS_ALLOWED_ORIGINS` (see `docs/DEPLOYMENT.md`).
+[`docs/LOAD-TESTING.md`](docs/LOAD-TESTING.md)
 
 ---
 
-## 📚 Documentation
+# 🔬 Test Coverage
 
-| Document | Contents |
-|----------|----------|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Services, ports, request flow, data flow |
-| [`docs/API-SPEC.md`](docs/API-SPEC.md) | Every REST endpoint across all services |
-| [`docs/PHASES.md`](docs/PHASES.md) | Phase-by-phase deliverables (1–7) |
-| [`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md) | The 10 metrics, formulas, weights, levels, filtering rules |
-| [`docs/DATABASE.md`](docs/DATABASE.md) | Tables, indexes, relationships |
-| [`docs/ENV-VARS.md`](docs/ENV-VARS.md) | Every environment variable, defaults, and which service reads it |
-| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deployment topologies (Docker full stack, split origins, smoke tests) |
-| [`docs/LOAD-TESTING.md`](docs/LOAD-TESTING.md) | Load-test script usage, GitHub budget math, expected numbers |
+### Auth Service
+
+Tests include:
+
+- Registration
+- Login
+- JWT generation
+- `/me`
+- Refresh token
+- Role authorization
+- Recruiter CRUD
+- GitHub OAuth flow
+- OAuth state validation
+- OAuth replay rejection
+
+### GitHub Service
+
+Tests include:
+
+- GitHub profile endpoints
+- Developer scoring
+- Score caching
+- GitHub 404 handling
+- GitHub 429 handling
+- Organization analytics
+- Team analytics
+- AI endpoints
+- Protected report endpoints
+- Score persistence
+
+### E2E Tests
+
+Cross-service JWT compatibility is tested between:
+
+```text
+auth-service
+      │
+      │ JWT
+      ▼
+github-service
+```
+
+This helps detect authentication contract drift between services.
 
 ---
 
-## ⭐ Support
+# 📚 Documentation
 
-If you like this project, please consider giving it a **⭐ Star** on GitHub.
+| Document | Description |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | System architecture and request/data flow |
+| [`docs/API-SPEC.md`](docs/API-SPEC.md) | REST API documentation |
+| [`docs/PHASES.md`](docs/PHASES.md) | Development phases |
+| [`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md) | Developer Score formulas and weights |
+| [`docs/DATABASE.md`](docs/DATABASE.md) | Database design |
+| [`docs/ENV-VARS.md`](docs/ENV-VARS.md) | Environment variables |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deployment configuration |
+| [`docs/LOAD-TESTING.md`](docs/LOAD-TESTING.md) | Load testing |
 
-It motivates continued development and helps others discover the project.
+---
+
+# 📊 What a Developer Can Learn from GitInsight AI
+
+A GitHub username can be transformed into a structured developer profile:
+
+```text
+GitHub Username
+       │
+       ▼
+┌─────────────────────────┐
+│ Developer Profile       │
+└────────────┬────────────┘
+             │
+     ┌───────┼────────┐
+     ▼       ▼        ▼
+   Repos   Commits   PRs
+     │       │        │
+     └───────┼────────┘
+             ▼
+      Analytics Engine
+             │
+    ┌────────┼─────────┐
+    ▼        ▼         ▼
+  Score    Quality    Activity
+    │        │         │
+    └────────┼─────────┘
+             ▼
+          Gemini AI
+             │
+    ┌────────┼─────────┐
+    ▼        ▼         ▼
+ Summary   Skills   Roadmap
+             │
+             ▼
+       Developer Profile
+```
+
+---
+
+# 🎯 Example Use Cases
+
+## 👨‍💻 Developers
+
+Understand:
+
+- Current GitHub activity
+- Repository quality
+- Coding consistency
+- Language usage
+- Commit quality
+- Areas for improvement
+- Career development opportunities
+
+## 👨‍💼 Recruiters
+
+Use GitInsight AI to:
+
+- Discover candidates
+- Analyze GitHub activity
+- Compare developers
+- Save candidates
+- Add notes
+- Review developer scores
+- Generate reports
+
+## 🏢 Engineering Teams
+
+Use organization analytics to understand:
+
+- Team activity
+- Repository health
+- Contributor distribution
+- Language stack
+- Commit activity
+- PR activity
+- Issue activity
+
+---
+
+# 📈 Current Project Status
+
+### Completed
+
+- ✅ Microservices architecture
+- ✅ GitHub integration
+- ✅ Developer scoring engine
+- ✅ Recruiter dashboard
+- ✅ JWT authentication
+- ✅ GitHub OAuth
+- ✅ Gemini AI integration
+- ✅ Commit quality analysis
+- ✅ Commit-diff AI review
+- ✅ Score history
+- ✅ PDF reports
+- ✅ Organization analytics
+- ✅ Team analytics
+- ✅ Docker deployment
+- ✅ Automated tests
+- ✅ E2E contract testing
+- ✅ Load testing support
+
+---
+
+# 🔮 Future Improvements
+
+Potential future enhancements include:
+
+- Advanced recruiter search and filtering
+- More AI-powered developer recommendations
+- Additional code-hosting integrations
+- Improved organization benchmarking
+- More detailed historical analytics
+- Advanced developer comparison
+- Additional deployment options
+- Enhanced AI portfolio evaluation
+
+---
+
+# ⚠️ Important Notes
+
+### GitHub API Rate Limits
+
+Using a GitHub Personal Access Token is recommended because unauthenticated GitHub API requests have significantly lower rate limits.
+
+Configure:
+
+```env
+GITHUB_TOKEN=your_token
+```
+
+### Rebuild After Backend Changes
+
+After modifying backend code:
+
+```bash
+./mvnw clean package -DskipTests
+```
+
+Then restart the affected service.
+
+### Secrets
+
+Never commit:
+
+```text
+.env
+JWT_SECRET
+GITHUB_TOKEN
+GEMINI_API_KEY
+GITHUB_CLIENT_SECRET
+```
+
+to the repository.
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+```text
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add/update tests
+5. Commit your changes
+6. Push the branch
+7. Open a Pull Request
+```
+
+Example:
+
+```bash
+git checkout -b feature/new-feature
+
+git add .
+
+git commit -m "feat: add new feature"
+
+git push origin feature/new-feature
+```
+
+---
+
+# 📄 License
+
+Add your preferred license here.
+
+For example:
+
+```text
+MIT License
+```
+
+---
+
+# ⭐ Support
+
+If you find GitInsight AI useful:
+
+- ⭐ Star the repository
+- 🍴 Fork the project
+- 🐛 Report issues
+- 💡 Suggest improvements
+- 🤝 Contribute to the project
+
+Your support helps the project grow.
+
+---
+
+<p align="center">
+  <strong>GitInsight AI</strong>
+</p>
+
+<p align="center">
+  Turning GitHub activity into meaningful developer intelligence.
+</p>
