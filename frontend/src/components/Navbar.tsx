@@ -5,7 +5,6 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/hooks/useTheme";
 import { useAuth } from "@/hooks/useAuth";
 import {
-  Code2,
   Menu,
   X,
   Sun,
@@ -45,9 +44,11 @@ export function Navbar() {
         <div className="flex items-center justify-between h-16 sm:h-20">
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2.5 group">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30">
-              <Code2 className="w-5 h-5 text-white" />
-            </div>
+            <img
+              src="/icon.svg"
+              alt="GitInsight AI"
+              className="w-9 h-9 rounded-xl ring-1 ring-primary/20 transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30"
+            />
             <span className="text-lg font-bold">
               <span className="gradient-text">GitInsight</span>
               <span className="text-foreground"> AI</span>

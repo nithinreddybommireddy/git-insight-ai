@@ -15,7 +15,6 @@ import {
   ArrowRight,
   Code2,
   Loader2,
-  Sparkles,
 } from "lucide-react";
 
 export function Login() {
@@ -56,9 +55,11 @@ export function Login() {
           <Card>
             <CardContent className="p-8">
               <div className="text-center mb-8">
-                <div className="w-14 h-14 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center mx-auto mb-4">
-                  <Sparkles className="w-7 h-7 text-white" />
-                </div>
+                <img
+                  src="/icon.svg"
+                  alt="GitInsight AI"
+                  className="w-14 h-14 rounded-xl mx-auto mb-4 ring-1 ring-primary/20"
+                />
                 <h1 className="text-2xl font-bold">Welcome back</h1>
                 <p className="text-sm text-muted-foreground mt-1">
                   Sign in to your GitInsight AI account

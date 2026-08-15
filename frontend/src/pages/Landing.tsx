@@ -125,6 +125,14 @@ export function Landing() {
           animate="visible"
           className="relative z-10 max-w-4xl mx-auto px-4 text-center"
         >
+          <motion.div variants={itemVariants} className="mb-6 flex justify-center">
+            <img
+              src="/icon.svg"
+              alt="GitInsight AI logo"
+              className="w-20 h-20 rounded-2xl ring-1 ring-primary/20 shadow-2xl shadow-primary/20"
+            />
+          </motion.div>
+
           <motion.div variants={itemVariants} className="mb-6">
             <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass text-sm text-muted-foreground border border-primary/20">
               <Sparkles className="w-4 h-4 text-primary" />

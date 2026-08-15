@@ -31,6 +31,7 @@
   <g fill="none" stroke-linecap="round" stroke-linejoin="round">
     <path d="M160 325 L240 285 L310 252 L378 220 L448 182"
           stroke="#5B8DEF" stroke-width="12"/>
+    <!-- arrowhead -->
     <path d="M448 182 l-16 16 M448 182 l-2 -22" stroke="#5B8DEF" stroke-width="12"/>
   </g>
   <g fill="#101E4F" stroke="#5B8DEF" stroke-width="5">
