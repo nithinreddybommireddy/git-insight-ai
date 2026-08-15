@@ -58,4 +58,13 @@ class JwtContractTest {
 
         assertThat(GITHUB.validateToken(token)).isFalse();
     }
+
+    @Test
+    void weakSecretsAreRejectedAtConstruction() {
+        // Both services must refuse to boot with a signing key shorter than 32 bytes.
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new JwtUtil("too-short", 3_600_000L, 604_800_000L));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new com.gitinsight.githubservice.security.JwtUtil("too-short"));
+    }
 }

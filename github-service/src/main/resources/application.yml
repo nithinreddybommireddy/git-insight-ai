@@ -10,10 +10,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    # SQL logging off by default; enable with SHOW_SQL=true when debugging locally.
+    show-sql: ${SHOW_SQL:false}
     properties:
       hibernate:
-        format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
 server:
@@ -27,6 +27,10 @@ eureka:
     prefer-ip-address: true
 
 app:
+  cors:
+    # Comma-separated allowlist of frontend origins (only needed when the frontend
+    # is hosted on a different origin; same-origin proxies never trigger CORS).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   jwt:
     # Shared signing secret from auth-service. No fallback: a service that
     # protects endpoints with JWTs must not boot with a known/committed key.

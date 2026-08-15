@@ -21,6 +21,10 @@ public class JwtUtil {
     private final SecretKey secretKey;
 
     public JwtUtil(@Value("${app.jwt.secret}") String secret) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalArgumentException(
+                    "app.jwt.secret (JWT_SECRET) must be at least 32 bytes — refusing to boot with a weak signing key");
+        }
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 

@@ -391,6 +391,50 @@ class AuthFlowIntegrationTest {
     }
 
     /**
+     * Open-redirect regression: a caller-supplied {@code redirectUri} must never
+     * become the post-login destination, because the JWT is appended to it. The
+     * entry point ignores the parameter entirely and always stores the configured
+     * frontend URI as the state target.
+     */
+    @Test
+    void githubOAuthNeverRedirectsTokensToCallerSuppliedUrls() throws Exception {
+        // GitHub: exchange + profile (same stub pattern as the full-flow test).
+        StubGitHubConfig.github.expect(requestTo("https://github.com/login/oauth/access_token"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(
+                        "{\"access_token\":\"gho_test-token-456\",\"token_type\":\"bearer\",\"scope\":\"user:email,read:user\"}",
+                        MediaType.APPLICATION_JSON));
+        StubGitHubConfig.github.expect(requestTo("https://api.github.com/user"))
+                .andRespond(withSuccess(
+                        "{\"id\":1000,\"login\":\"victim\",\"name\":\"Victim\",\"email\":\"victim@example.com\",\"avatar_url\":\"https://avatars.example/u.png\"}",
+                        MediaType.APPLICATION_JSON));
+
+        // A crafted entry link carrying an attacker-controlled redirectUri.
+        MvcResult entry = mockMvc.perform(get("/api/auth/oauth/github")
+                        .param("redirectUri", "https://evil.example.com/steal"))
+                .andExpect(status().isFound())
+                .andReturn();
+        String authorizeUrl = entry.getResponse().getHeader("Location");
+        org.assertj.core.api.Assertions.assertThat(authorizeUrl)
+                .isNotNull()
+                .doesNotContain("evil.example.com");
+        String state = UriComponentsBuilder.fromUriString(authorizeUrl)
+                .build().getQueryParams().getFirst("state");
+
+        // The callback redirects to the configured frontend — never evil.example.com.
+        MvcResult callback = mockMvc.perform(get("/api/auth/oauth/github/callback")
+                        .param("code", "code-for-evil-attempt")
+                        .param("state", state))
+                .andExpect(status().isFound())
+                .andReturn();
+        String redirect = callback.getResponse().getHeader("Location");
+        org.assertj.core.api.Assertions.assertThat(redirect)
+                .isNotNull()
+                .startsWith("http://localhost:5173/auth/callback?")
+                .doesNotContain("evil.example.com");
+    }
+
+    /**
      * Replaces the auto-configured {@link RestClient.Builder} with one bound to a
      * {@link MockRestServiceServer}, so the OAuth flow's calls to GitHub's token
      * and user endpoints can be stubbed while every other layer runs for real.

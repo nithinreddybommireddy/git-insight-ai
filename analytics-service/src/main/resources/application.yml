@@ -10,10 +10,10 @@ spring:
   jpa:
     hibernate:
       ddl-auto: update
-    show-sql: true
+    # SQL logging off by default; enable with SHOW_SQL=true when debugging locally.
+    show-sql: ${SHOW_SQL:false}
     properties:
       hibernate:
-        format_sql: true
         dialect: org.hibernate.dialect.PostgreSQLDialect
 
 server:

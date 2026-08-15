@@ -23,6 +23,9 @@ eureka:
     fetch-registry: false
 
 app:
+  security:
+    # Integration suite performs many register/login calls from the same IP in one JVM.
+    auth-rate-limit-per-minute: 10000
   jwt:
     secret: integration-test-secret-key-at-least-32-bytes-long
     expiration-ms: 3600000

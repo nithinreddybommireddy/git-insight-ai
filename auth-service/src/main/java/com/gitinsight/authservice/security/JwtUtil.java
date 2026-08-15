@@ -20,6 +20,7 @@ public class JwtUtil {
             @Value("${app.jwt.secret}") String secret,
             @Value("${app.jwt.expiration-ms}") long expirationMs,
             @Value("${app.jwt.refresh-expiration-ms}") long refreshExpirationMs) {
+        requireStrongSecret(secret);
         this.secretKey = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
         this.expirationMs = expirationMs;
         this.refreshExpirationMs = refreshExpirationMs;
@@ -66,6 +67,13 @@ public class JwtUtil {
             return true;
         } catch (JwtException | IllegalArgumentException e) {
             return false;
+        }
+    }
+
+    private static void requireStrongSecret(String secret) {
+        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalArgumentException(
+                    "app.jwt.secret (JWT_SECRET) must be at least 32 bytes — refusing to boot with a weak signing key");
         }
     }
 

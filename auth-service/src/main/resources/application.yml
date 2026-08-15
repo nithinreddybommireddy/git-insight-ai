@@ -31,6 +31,13 @@ eureka:
     prefer-ip-address: true
 
 app:
+  cors:
+    # Comma-separated allowlist of frontend origins (only needed when the frontend
+    # is hosted on a different origin; same-origin proxies never trigger CORS).
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  security:
+    # Per-IP brute-force guard for /api/auth/login and /api/auth/register (in-memory, per instance).
+    auth-rate-limit-per-minute: 20
   jwt:
     # No fallback: the app must NOT boot with a known/committed signing key.
     # Provide JWT_SECRET in the environment (32+ random bytes).
