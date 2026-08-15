@@ -24,7 +24,7 @@ echo "=== Building all modules ==="
 
 # Start Eureka Server in background
 echo "=== Starting Eureka Server (port 8761) ==="
-java -jar eureka-server/target/eureka-server-*.jar &
+java -jar eureka-server/target/eureka-server-*-exec.jar &
 EUREKA_PID=$!
 echo "Eureka PID: $EUREKA_PID"
 
@@ -40,10 +40,10 @@ done
 
 # Start Analytics Service in background
 echo "=== Starting Analytics Service (port 8082) ==="
-java -jar analytics-service/target/analytics-service-*.jar &
+java -jar analytics-service/target/analytics-service-*-exec.jar &
 ANALYTICS_PID=$!
 echo "Analytics PID: $ANALYTICS_PID"
 
 # Start GitHub Service in foreground (this will be the preview)
 echo "=== Starting GitHub Service (port 8081) ==="
-java -jar github-service/target/github-service-*.jar
+java -jar github-service/target/github-service-*-exec.jar

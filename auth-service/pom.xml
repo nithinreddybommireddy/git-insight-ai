@@ -85,6 +85,9 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.gitinsight.authservice.AuthServiceApplication</mainClass>
+                    <!-- Keep the plain jar (consumable by e2e-tests) and put the
+                         runnable fat jar at *-exec.jar. -->
+                    <classifier>exec</classifier>
                 </configuration>
             </plugin>
         </plugins>
