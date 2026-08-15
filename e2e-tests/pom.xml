@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.gitinsight</groupId>
+        <artifactId>git-insight-ai</artifactId>
+        <version>0.0.1-SNAPSHOT</version>
+    </parent>
+
+    <artifactId>e2e-tests</artifactId>
+    <name>e2e-tests</name>
+    <description>Cross-service end-to-end contract tests (no Spring context bootstrapped)</description>
+
+    <dependencies>
+        <!-- Both services' real classes on one test classpath. No Spring context is
+             booted here, so the services' identical bean names (securityConfig,
+             jwtAuthFilter, jwtUtil) never conflict — this module exists purely to
+             exercise the runtime contract BETWEEN the services. -->
+        <dependency>
+            <groupId>com.gitinsight</groupId>
+            <artifactId>auth-service</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.gitinsight</groupId>
+            <artifactId>github-service</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+    </dependencies>
+
+</project>
