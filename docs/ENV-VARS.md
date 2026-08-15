@@ -18,12 +18,16 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 | `GITHUB_OAUTH_REDIRECT_URI` | auth-service | `http://localhost:8083/api/auth/oauth/github/callback` | Public callback URL registered in the GitHub OAuth app |
 | `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | `http://localhost:5173/auth/callback` | Where the browser lands after OAuth login (frontend token-consumer route) |
 | `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Base URL auth-service uses to reach github-service |
+| `CORS_ALLOWED_ORIGINS` | auth + github-service | `http://localhost:5173` | Comma-separated frontend origin allowlist — only needed when the frontend is hosted on a different origin than the backend (see `docs/DEPLOYMENT.md`) |
+| `SHOW_SQL` | github + analytics-service | `false` | Set `true` to log Hibernate SQL while debugging |
+| `VITE_API_BASE` | frontend (build-time) | *(empty → same-origin `/api`)* | Backend origin when the frontend is hosted separately from the backend (see `docs/DEPLOYMENT.md`) |
 
 ## Which service reads what
 
-- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`
-- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`
-- **analytics-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`
+- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `SHOW_SQL`
+- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`, `CORS_ALLOWED_ORIGINS`
+- **analytics-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `SHOW_SQL`
+- **frontend** — `VITE_API_BASE` (build-time only; baked into the static bundle)
 
 ## Example
 

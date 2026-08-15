@@ -1,7 +1,12 @@
 import axios from "axios";
 
+// API base: set VITE_API_BASE at build time when the backend is NOT same-origin
+// (e.g. a gateway at https://api.example.com). Defaults to same-origin /api,
+// which the dev proxy (vite.config.ts) and the Docker nginx gateway both serve.
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined ?? "").replace(/\/$/, "");
+
 const api = axios.create({
-  baseURL: "/api",
+  baseURL: `${API_BASE}/api`,
   headers: {
     "Content-Type": "application/json",
   },
