@@ -130,7 +130,10 @@ Detailed phase docs: [`docs/PHASES.md`](docs/PHASES.md)
 
 - **No committed secrets** — `JWT_SECRET` has no fallback: auth-service and github-service refuse to start without it (fail-fast instead of signing with a known key). GitHub OAuth credentials come only from the environment.
 - **JWT-protected reports** — github-service keeps the analysis/AI surface public (GitHub data is public by nature), but `GET /api/reports/all`, `GET /api/reports/stats`, and the other `/api/reports/**` endpoints require a valid auth-service JWT.
-- **OAuth CSRF protection** — GitHub login uses a random, single-use, expiring `state` token stored server-side; the callback validates it before exchanging the code. The frontend URL is never used as the state.
+- **OAuth CSRF protection** — GitHub login uses a random, single-use, expiring `state` token stored server-side; the callback validates it before exchanging the code. The frontend URL is never used as the state, and a caller-supplied `redirectUri` is ignored entirely (it would be an open redirect that exfiltrates the JWT).
+- **Brute-force guard** — `/api/auth/login` and `/api/auth/register` are rate-limited per client IP (20 req/min by default, `app.security.auth-rate-limit-per-minute`) and return 429 when exceeded.
+- **Weak-key fail-fast** — both services refuse to boot if `JWT_SECRET` is shorter than 32 bytes.
+- **No SQL logging** — `show-sql` is off by default (`SHOW_SQL=true` to enable while debugging); actuator is limited to `/actuator/health` on every service.
 
 ---
 
@@ -142,6 +145,7 @@ Prerequisites: **Java 21**, **Maven** (or `./mvnw`), **Node 20+ / Bun**, **Postg
 # 1. Create databases (skip if you already created them)
 sudo -u postgres createdb gitinsight_auth
 sudo -u postgres createdb gitinsight_github
+sudo -u postgres createdb gitinsight_analytics
 
 # 2. Build everything (including the common module) — run from the repo ROOT
 ./mvnw clean package -DskipTests
@@ -154,12 +158,12 @@ Or start services manually:
 
 ```bash
 # Terminal A — Eureka
-java -jar eureka-server/target/eureka-server-*.jar
+java -jar eureka-server/target/eureka-server-*-exec.jar
 
 # Terminal B — backends (order matters: Eureka first)
-java -jar auth-service/target/auth-service-*.jar       # 8083
-java -jar analytics-service/target/analytics-service-*.jar  # 8082
-java -jar github-service/target/github-service-*.jar   # 8081
+java -jar auth-service/target/auth-service-*-exec.jar       # 8083
+java -jar analytics-service/target/analytics-service-*-exec.jar  # 8082
+java -jar github-service/target/github-service-*-exec.jar   # 8081
 
 # Terminal C — frontend
 cd frontend && bun install && bun run dev --host 0.0.0.0 --port 5173
@@ -168,6 +172,34 @@ cd frontend && bun install && bun run dev --host 0.0.0.0 --port 5173
 Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) → explore the Developer Score, Language Stack, Top Contributors, Commit & Code Quality, and AI reviews.
 
 > ⚠️ The `github-service` JAR must be **rebuilt** after any backend change: `./mvnw clean package -DskipTests`, then restart it.
+
+## 🐳 Docker (full stack)
+
+The repo ships a root `Dockerfile` (multi-stage: one Maven build, one slim runtime image per service) plus a `docker-compose.yml` that wires **PostgreSQL + Eureka + all 3 services + the frontend (nginx)** together.
+
+```bash
+# 1. Configure env (JWT_SECRET is REQUIRED; see docker/env.example)
+cp docker/env.example .env
+#    edit .env and set JWT_SECRET=$(openssl rand -hex 32) — and GITHUB_TOKEN if you have one
+
+# 2. Build + start the whole stack (from the repo root)
+docker compose up --build
+```
+
+| URL | Service |
+|-----|---------|
+| http://localhost:5173 | Frontend (nginx, SPA + `/api` proxy) |
+| http://localhost:8761 | Eureka dashboard |
+| http://localhost:8081 | github-service |
+| http://localhost:8082 | analytics-service |
+| http://localhost:8083 | auth-service |
+| localhost:5432 | PostgreSQL (`gitinsight_auth` / `gitinsight_github` / `gitinsight_analytics`) |
+
+```bash
+docker compose logs -f github-service   # follow one service
+docker compose down                      # stop (keep the DB volume)
+docker compose down -v                   # stop and wipe the database
+```
 
 ## 🧪 Testing
 
@@ -178,6 +210,9 @@ Open **http://localhost:5173** → search a GitHub username (e.g. `torvalds`) �
 # Frontend
 cd frontend && bun run build   # tsc + vite build
 cd frontend && bun run lint    # oxlint
+
+# Load test (against a running stack — see docs/LOAD-TESTING.md)
+node scripts/load-test.mjs
 ```
 
 | Suite | Coverage |
@@ -185,6 +220,11 @@ cd frontend && bun run lint    # oxlint
 | `auth-service` | Full auth flow over the real HTTP + security + JPA stack: register → login → JWT → `/me` → refresh → role authorization → recruiter CRUD, plus the complete GitHub OAuth round trip (random state, code exchange, user upsert, token redirect, replay rejection) |
 | `github-service` | Profile/score endpoints, 30-min score caching, 404/429 mapping, org/team analytics, AI endpoints, and authenticated reports (`/api/reports/**` requires a Bearer JWT) with real score persistence |
 | `e2e-tests` | Cross-service contract: tokens minted by the **real auth-service `JwtUtil`** validate against the **real github-service `JwtUtil`** (claim names, algorithm, shared-secret derivation) — catches drift the per-service suites can't |
+
+## 🚀 Deployment
+
+- **Full stack (Docker Compose)** — one command on any container host: PostgreSQL + Eureka + all services + nginx frontend. See the Docker section above and `docs/DEPLOYMENT.md`.
+- **Static frontend + containerized backend** — `VITE_API_BASE` + `CORS_ALLOWED_ORIGINS` (see `docs/DEPLOYMENT.md`).
 
 ---
 
@@ -197,6 +237,9 @@ cd frontend && bun run lint    # oxlint
 | [`docs/PHASES.md`](docs/PHASES.md) | Phase-by-phase deliverables (1–7) |
 | [`docs/SCORING-ENGINE.md`](docs/SCORING-ENGINE.md) | The 10 metrics, formulas, weights, levels, filtering rules |
 | [`docs/DATABASE.md`](docs/DATABASE.md) | Tables, indexes, relationships |
+| [`docs/ENV-VARS.md`](docs/ENV-VARS.md) | Every environment variable, defaults, and which service reads it |
+| [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) | Deployment topologies (Docker full stack, split origins, smoke tests) |
+| [`docs/LOAD-TESTING.md`](docs/LOAD-TESTING.md) | Load-test script usage, GitHub budget math, expected numbers |
 
 ---
 
