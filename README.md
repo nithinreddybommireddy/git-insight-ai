@@ -648,6 +648,8 @@ Auth Service   → http://localhost:8083
 PostgreSQL     → localhost:5432
 ```
 
+> 🪟 **Windows:** the bash scripts (`start-dev.sh`, `scripts/init-env.sh`) assume a POSIX shell. Use **Git Bash** or **WSL** to run them (or run the equivalent commands manually from the sections below).
+
 ---
 
 # ▶️ Manual Startup
@@ -713,10 +715,13 @@ Frontend / Nginx
 ## Configure Environment
 
 ```bash
-cp docker/env.example .env
+# Bootstraps .env from docker/env.example and generates a random JWT_SECRET
+# (JWT_SECRET is required — the services refuse to boot with a weak one).
+sh scripts/init-env.sh
+# ...or copy manually and edit:  cp docker/env.example .env
 ```
 
-Edit `.env` and configure the required values.
+Add `GITHUB_TOKEN` / `GEMINI_API_KEY` / OAuth credentials to `.env` if you have them.
 
 For example:
 
