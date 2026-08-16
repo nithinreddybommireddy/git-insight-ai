@@ -11,36 +11,35 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * In-memory fixed-window rate limiter for the credential endpoints
+ * Fixed-window rate limiter for the credential endpoints
  * ({@code /api/auth/login}, {@code /api/auth/register}) to blunt brute-force
- * password guessing and mass account creation.
+ * password guessing and mass account creation. Counting is delegated to
+ * {@link FixedWindowRateLimiter} — Redis in production, so windows are shared
+ * across instances and survive restarts.
  *
  * <p>Budget: {@code app.security.auth-rate-limit-per-minute} requests per client
  * IP per 60-second window (default 20). The client IP honors the first
  * {@code X-Forwarded-For} hop when present (proxied deployments), falling back
- * to the socket address. This is a best-effort, per-instance guard — a
- * production deployment behind a load balancer should also apply network-level
- * rate limiting at the gateway.
+ * to the socket address. This is a best-effort guard — a production deployment
+ * behind a load balancer should also apply network-level rate limiting at the
+ * gateway.
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    private static final long WINDOW_MS = 60_000L;
-    private static final int MAX_TRACKED_KEYS = 10_000;
-
     private final int maxRequestsPerWindow;
     private final ObjectMapper objectMapper;
-    private final Map<String, Window> windows = new ConcurrentHashMap<>();
+    private final FixedWindowRateLimiter rateLimiter;
 
     public RateLimitFilter(
             @Value("${app.security.auth-rate-limit-per-minute:20}") int maxRequestsPerWindow,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            FixedWindowRateLimiter rateLimiter) {
         this.maxRequestsPerWindow = maxRequestsPerWindow;
         this.objectMapper = objectMapper;
+        this.rateLimiter = rateLimiter;
     }
 
     @Override
@@ -52,29 +51,15 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
-        String key = clientKey(request);
-        long now = System.currentTimeMillis();
+        long count = rateLimiter.increment(clientKey(request));
 
-        Window window = windows.compute(key, (k, existing) -> {
-            if (existing == null || now - existing.start >= WINDOW_MS) {
-                return new Window(now, 1);
-            }
-            existing.count++;
-            return existing;
-        });
-
-        if (window.count > maxRequestsPerWindow) {
+        if (count > maxRequestsPerWindow) {
             response.setStatus(429);
             response.setContentType("application/json");
             response.setCharacterEncoding("UTF-8");
             response.getWriter().write(objectMapper.writeValueAsString(
                     new ApiResponse<>(false, "Too many attempts. Please try again in a minute.", null)));
             return;
-        }
-
-        // Opportunistic cleanup so a burst of distinct IPs cannot grow the map forever.
-        if (windows.size() > MAX_TRACKED_KEYS) {
-            windows.entrySet().removeIf(e -> now - e.getValue().start >= WINDOW_MS);
         }
 
         chain.doFilter(request, response);
@@ -86,15 +71,5 @@ public class RateLimitFilter extends OncePerRequestFilter {
                 ? forwarded.split(",")[0].trim()
                 : request.getRemoteAddr();
         return ip + "|" + request.getRequestURI();
-    }
-
-    private static final class Window {
-        final long start;
-        int count;
-
-        Window(long start, int count) {
-            this.start = start;
-            this.count = count;
-        }
     }
 }

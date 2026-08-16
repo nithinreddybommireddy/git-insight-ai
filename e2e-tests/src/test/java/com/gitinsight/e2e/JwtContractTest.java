@@ -1,6 +1,6 @@
 package com.gitinsight.e2e;
 
-import com.gitinsight.authservice.security.JwtUtil;
+import com.gitinsight.common.security.JwtUtil;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -9,12 +9,12 @@ import static org.assertj.core.api.Assertions.assertThat;
  * Cross-service JWT contract test (plain unit test — no Spring context).
  *
  * <p>auth-service mints JWTs at login; github-service validates them for
- * {@code /api/reports/**}. The two sides share a secret ({@code JWT_SECRET})
- * and a claim contract ({@code sub} = userId, {@code email}, {@code role};
- * HS256; the same byte-secret derivation). This test drives the REAL
- * {@code JwtUtil} from both services against each other so any drift in claim
- * names, algorithm, or secret derivation fails the build — the exact seam that
- * per-service tests (which self-mint tokens) cannot see.
+ * {@code /api/reports/**}. Both sides now share ONE {@code JwtUtil} from the
+ * common module (same secret policy, claim contract — {@code sub} = userId,
+ * {@code email}, {@code role}; HS256; the same byte-secret derivation), so the
+ * historical drift seam is closed at compile time. This test drives the shared
+ * class through both the issuing and validation-only constructors to prove the
+ * runtime contract the services depend on.
  *
  * <p>Endpoint-level enforcement (Bearer token → 200, no/garbage token → 401)
  * is covered by {@code GitHubFlowIntegrationTest} in github-service.
@@ -26,8 +26,7 @@ class JwtContractTest {
 
     private static final JwtUtil AUTH = new JwtUtil(SHARED_SECRET, 3_600_000L, 604_800_000L);
 
-    private static final com.gitinsight.githubservice.security.JwtUtil GITHUB =
-            new com.gitinsight.githubservice.security.JwtUtil(SHARED_SECRET);
+    private static final JwtUtil GITHUB = new JwtUtil(SHARED_SECRET);
 
     @Test
     void tokenMintedByAuthServiceIsAcceptedByGithubService() {
@@ -42,9 +41,7 @@ class JwtContractTest {
 
     @Test
     void tokenSignedWithDifferentSecretIsRejected() {
-        com.gitinsight.githubservice.security.JwtUtil other =
-                new com.gitinsight.githubservice.security.JwtUtil(
-                        "a-completely-different-secret-key-at-least-32-bytes-long");
+        JwtUtil other = new JwtUtil("a-completely-different-secret-key-at-least-32-bytes-long");
 
         String token = AUTH.generateToken(1L, "user@example.com", "USER");
 
@@ -60,11 +57,31 @@ class JwtContractTest {
     }
 
     @Test
+    void validationOnlyInstanceCannotIssueTokens() {
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> GITHUB.generateToken(1L, "user@example.com", "USER"));
+    }
+
+    @Test
     void weakSecretsAreRejectedAtConstruction() {
-        // Both services must refuse to boot with a signing key shorter than 32 bytes.
+        // Both services share the same strength policy — short secrets and
+        // known weak defaults must refuse to boot.
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
                 () -> new JwtUtil("too-short", 3_600_000L, 604_800_000L));
         org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
-                () -> new com.gitinsight.githubservice.security.JwtUtil("too-short"));
+                () -> new JwtUtil("too-short"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new JwtUtil("changeme", 3_600_000L, 604_800_000L));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new JwtUtil("your-256-bit-secret"));
+    }
+
+    @Test
+    void raisedMinimumLengthIsEnforced() {
+        // 32-byte secret passes the default policy but fails the production
+        // (64-byte) policy — the strictness knob deployments rely on.
+        org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> new JwtUtil(SHARED_SECRET));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> new JwtUtil(SHARED_SECRET, 64));
     }
 }

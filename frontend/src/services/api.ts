@@ -21,16 +21,15 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
-// Surface a clear message when GitHub's rate limit is hit (HTTP 429) so pages
-// render guidance instead of a raw status text. Transient limits self-heal on
-// the backend (retry with backoff); this catches the case where the limit is
-// genuinely exhausted.
+// Surface a friendly message when the GitHub API is temporarily unavailable
+// (HTTP 429) so pages render guidance instead of a raw status text. End users
+// should never see backend/API details (quota, tokens, rate-limit config).
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error?.response?.status === 429 && error.response.data && typeof error.response.data === "object") {
       error.response.data.message =
-        "GitHub API rate limit reached. Wait a minute and try again — or configure a GITHUB_TOKEN on the backend for a 5,000 requests/hour limit.";
+        "GitHub is temporarily busy. Please wait a minute and try again.";
     }
     return Promise.reject(error);
   }
@@ -206,7 +205,10 @@ export const authApi = {
   },
 
   githubOAuth: (): string => {
-    return `/api/auth/oauth/github`;
+    // Must point at the backend origin when it differs from the frontend's
+    // (VITE_API_BASE) — the OAuth entry is a full-page navigation, not an XHR,
+    // so the axios baseURL is not applied here.
+    return `${API_BASE}/api/auth/oauth/github`;
   },
 };
 

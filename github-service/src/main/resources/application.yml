@@ -3,9 +3,12 @@ spring:
     name: github-service
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/gitinsight_github
-    username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    # DATABASE_URL / DATABASE_USERNAME / DATABASE_PASSWORD are the production
+    # names; the SPRING_DATASOURCE_* forms (used by docker-compose) still work
+    # and take precedence when both are set (relaxed binding).
+    url: ${DATABASE_URL:${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/gitinsight_github}}
+    username: ${DATABASE_USERNAME:${SPRING_DATASOURCE_USERNAME:postgres}}
+    password: ${DATABASE_PASSWORD:${SPRING_DATASOURCE_PASSWORD:postgres}}
 
   jpa:
     hibernate:
@@ -22,7 +25,9 @@ server:
 eureka:
   client:
     service-url:
-      defaultZone: http://localhost:8761/eureka/
+      # EUREKA_URL is the production name; EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
+      # (docker-compose) still overrides it via relaxed binding when set.
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
     prefer-ip-address: true
 
@@ -35,6 +40,9 @@ app:
     # Shared signing secret from auth-service. No fallback: a service that
     # protects endpoints with JWTs must not boot with a known/committed key.
     secret: ${JWT_SECRET}
+    # Minimum signing-key length in bytes. Raise to 64 in production
+    # (JWT_MIN_SECRET_BYTES=64) so deployments cannot ship a 32-byte key.
+    min-secret-bytes: ${JWT_MIN_SECRET_BYTES:32}
 
 github:
   token: ${GITHUB_TOKEN:}

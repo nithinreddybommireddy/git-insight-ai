@@ -6,6 +6,10 @@ import com.gitinsight.authservice.entity.User;
 import com.gitinsight.authservice.repository.RecruiterNoteRepository;
 import com.gitinsight.authservice.repository.SavedCandidateRepository;
 import com.gitinsight.authservice.repository.UserRepository;
+import com.gitinsight.authservice.security.FixedWindowRateLimiter;
+import com.gitinsight.authservice.security.InMemoryFixedWindowRateLimiter;
+import com.gitinsight.authservice.security.InMemoryOAuthStateStore;
+import com.gitinsight.authservice.security.OAuthStateStore;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -450,6 +454,20 @@ class AuthFlowIntegrationTest {
             RestClient.Builder builder = RestClient.builder();
             github = MockRestServiceServer.bindTo(builder).build();
             return builder;
+        }
+
+        // The production beans are Redis-backed; the integration suite has no
+        // Redis, so swap in in-memory fakes that mirror the same semantics.
+        @Bean
+        @Primary
+        FixedWindowRateLimiter fixedWindowRateLimiter() {
+            return new InMemoryFixedWindowRateLimiter(60_000L);
+        }
+
+        @Bean
+        @Primary
+        OAuthStateStore oauthStateStore() {
+            return new InMemoryOAuthStateStore();
         }
     }
 }

@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,8 @@ interface ProfileCardProps {
 }
 
 export function ProfileCard({ profile }: ProfileCardProps) {
+  const navigate = useNavigate();
+
   const stats = [
     { label: "Repositories", value: profile.publicRepositories, icon: BookOpen, color: "from-violet-500 to-purple-500" },
     { label: "Followers", value: profile.followers, icon: Users, color: "from-cyan-500 to-blue-500" },
@@ -63,7 +66,8 @@ export function ProfileCard({ profile }: ProfileCardProps) {
   };
 
   const handleCompare = () => {
-    toast.success("Compare feature coming soon!", { icon: "🚧" });
+    // Navigate to the (fully implemented) Compare page, pre-filling Developer 1.
+    navigate(`/compare?user1=${encodeURIComponent(profile.username)}&user2=`);
   };
 
   const handleViewRepos = () => {
@@ -71,7 +75,9 @@ export function ProfileCard({ profile }: ProfileCardProps) {
   };
 
   const handleDownloadReport = () => {
-    toast.success("Report generation coming soon!", { icon: "🚧" });
+    // Navigate to the (fully implemented) Reports page for this developer,
+    // which auto-generates the report and offers PDF export.
+    navigate(`/reports/${encodeURIComponent(profile.username)}`);
   };
 
   const daysSinceJoin = Math.floor(

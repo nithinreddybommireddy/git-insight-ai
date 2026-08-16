@@ -45,10 +45,21 @@ public class GeminiService {
             "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
     private static final String MODEL_NAME = "gemini-3.1-flash-lite";
     private static final int MAX_OUTPUT_TOKENS = 800;
+    // End-user copy for when the Gemini call itself fails (rate limit, quota,
+    // timeout, 5xx) — never exposes API keys or backend configuration.
+    private static final String FALLBACK_UNAVAILABLE =
+            "AI insights are temporarily unavailable. Please try again in a few minutes.";
     private static final int JOB_MATCH_MAX_OUTPUT_TOKENS = 1500;
     private static final int MAX_JOB_DESCRIPTION_CHARS = 3500;
     private static final int COMMIT_DIFF_MAX_OUTPUT_TOKENS = 2000;
     private static final int MAX_COMMIT_DIFF_COMMITS = 3;
+    private static final int MAX_COMMIT_DIFF_FILES_PER_COMMIT = 12;  // mirrors CommitDiffService
+    private static final int MAX_DIFF_PATCH_CHARS = 4000;            // per-file patch cap in the prompt
+    private static final int MAX_DIFF_PROMPT_CHARS = 24_000;         // total prompt cap
+    private static final int MAX_KEY_ISSUES = 8;
+    private static final int MAX_FILE_REVIEWS = 20;
+    private static final int MAX_FILE_FINDINGS = 6;
+    private static final int MAX_EXPLANATIONS = 20;
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
@@ -196,7 +207,8 @@ public class GeminiService {
                     ? new CommitDiffReviewRequest("", List.of()) : request);
         }
         String prompt = buildCommitDiffReviewPrompt(request);
-        String raw = callGemini(prompt, "Commit Diff Review", COMMIT_DIFF_MAX_OUTPUT_TOKENS);
+        String raw = callGemini(prompt, "Commit Diff Review", COMMIT_DIFF_MAX_OUTPUT_TOKENS,
+                commitDiffResponseSchema());
         if (raw == null || raw.isBlank()) {
             return CommitDiffReviewResponse.deterministic(request);
         }
@@ -220,7 +232,8 @@ public class GeminiService {
             return JobMatchAiResponse.disabled();
         }
         String prompt = buildJobMatchPrompt(request);
-        String raw = callGemini(prompt, "Job Match", JOB_MATCH_MAX_OUTPUT_TOKENS);
+        String raw = callGemini(prompt, "Job Match", JOB_MATCH_MAX_OUTPUT_TOKENS,
+                jobMatchResponseSchema());
         if (raw == null || raw.isBlank()) {
             return JobMatchAiResponse.disabled();
         }
@@ -236,16 +249,21 @@ public class GeminiService {
     // ═══════════════════════════════════════════════════════════════
 
     private String callGemini(String prompt, String taskName) {
-        return callGemini(prompt, taskName, MAX_OUTPUT_TOKENS);
+        return callGemini(prompt, taskName, MAX_OUTPUT_TOKENS, null);
     }
 
     private String callGemini(String prompt, String taskName, int maxOutputTokens) {
+        return callGemini(prompt, taskName, maxOutputTokens, null);
+    }
+
+    private String callGemini(String prompt, String taskName, int maxOutputTokens,
+                              Map<String, Object> responseSchema) {
         if (!enabled) {
             return getFallbackResponse(taskName);
         }
 
         try {
-            Map<String, Object> requestBody = buildGeminiRequest(prompt, maxOutputTokens);
+            Map<String, Object> requestBody = buildGeminiRequest(prompt, maxOutputTokens, responseSchema);
 
             Map<String, Object> response = restClient.post()
                     .uri(GEMINI_API_URL + "?key=" + apiKey)
@@ -256,8 +274,11 @@ public class GeminiService {
             return extractText(response);
 
         } catch (Exception e) {
-            log.error("Gemini API call failed", e);
-            return getFallbackResponse(taskName);
+            log.error("Gemini API call failed for {}", taskName, e);
+            // Keep the existing contract for Enhanced Insights (null → frontend
+            // falls back to the rule-based insights). Everything else gets a
+            // friendly, non-technical message.
+            return "Enhanced Insights".equals(taskName) ? null : FALLBACK_UNAVAILABLE;
         }
     }
 
@@ -282,10 +303,11 @@ public class GeminiService {
     }
 
     private Map<String, Object> buildGeminiRequest(String userPrompt) {
-        return buildGeminiRequest(userPrompt, MAX_OUTPUT_TOKENS);
+        return buildGeminiRequest(userPrompt, MAX_OUTPUT_TOKENS, null);
     }
 
-    private Map<String, Object> buildGeminiRequest(String userPrompt, int maxOutputTokens) {
+    private Map<String, Object> buildGeminiRequest(String userPrompt, int maxOutputTokens,
+                                                   Map<String, Object> responseSchema) {
         Map<String, Object> systemPart = new HashMap<>();
         systemPart.put("text", getSystemInstruction());
 
@@ -303,6 +325,13 @@ public class GeminiService {
         generationConfig.put("temperature", 0.7);
         generationConfig.put("maxOutputTokens", maxOutputTokens);
         generationConfig.put("topP", 0.9);
+        if (responseSchema != null) {
+            // Structured output: force the model to return JSON matching the
+            // schema below (and make any deviation a parse failure, which the
+            // callers treat as a deterministic fallback).
+            generationConfig.put("responseMimeType", "application/json");
+            generationConfig.put("responseSchema", responseSchema);
+        }
 
         Map<String, Object> request = new HashMap<>();
         request.put("systemInstruction", systemInstruction);
@@ -310,6 +339,67 @@ public class GeminiService {
         request.put("generationConfig", generationConfig);
 
         return request;
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // STRUCTURED OUTPUT SCHEMAS (Gemini OpenAPI-style responseSchema)
+    // ═══════════════════════════════════════════════════════════════
+
+    private static Map<String, Object> typeString() {
+        return Map.of("type", "STRING");
+    }
+
+    private static Map<String, Object> typeInteger() {
+        return Map.of("type", "INTEGER");
+    }
+
+    private static Map<String, Object> stringArraySchema() {
+        return Map.of("type", "ARRAY", "items", typeString());
+    }
+
+    private static Map<String, Object> jobMatchResponseSchema() {
+        Map<String, Object> explanation = new LinkedHashMap<>();
+        explanation.put("type", "OBJECT");
+        explanation.put("properties", Map.of(
+                "username", typeString(),
+                "fitLabel", typeString(),
+                "explanation", typeString(),
+                "strengths", stringArraySchema(),
+                "gaps", stringArraySchema(),
+                "recommendation", typeString()
+        ));
+        explanation.put("required", List.of("username", "fitLabel", "explanation"));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "ARRAY");
+        schema.put("items", explanation);
+        return schema;
+    }
+
+    private static Map<String, Object> commitDiffResponseSchema() {
+        Map<String, Object> fileReview = new LinkedHashMap<>();
+        fileReview.put("type", "OBJECT");
+        fileReview.put("properties", Map.of(
+                "filename", typeString(),
+                "score", typeInteger(),
+                "summary", typeString(),
+                "issues", stringArraySchema(),
+                "suggestions", stringArraySchema()
+        ));
+        fileReview.put("required", List.of("filename", "score"));
+
+        Map<String, Object> schema = new LinkedHashMap<>();
+        schema.put("type", "OBJECT");
+        schema.put("properties", Map.of(
+                "overallScore", typeInteger(),
+                "overallSummary", typeString(),
+                "keyIssues", stringArraySchema(),
+                "strengths", stringArraySchema(),
+                "recommendations", stringArraySchema(),
+                "fileReviews", Map.of("type", "ARRAY", "items", fileReview)
+        ));
+        schema.put("required", List.of("overallScore", "overallSummary", "fileReviews"));
+        return schema;
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -777,6 +867,9 @@ public class GeminiService {
         );
     }
 
+    private static final Set<String> FIT_LABELS = Set.of(
+            "Strong fit", "Good fit", "Partial fit", "Weak fit");
+
     @SuppressWarnings("unchecked")
     private List<JobMatchAiResponse.Explanation> parseJobMatchExplanations(String raw) {
         try {
@@ -794,16 +887,27 @@ public class GeminiService {
             List<JobMatchAiResponse.Explanation> out = new ArrayList<>();
             int rank = 0;
             for (Map<String, Object> item : items) {
+                if (out.size() >= MAX_EXPLANATIONS) break;
                 rank++;
+                // Strict validation: an entry without a username or a real
+                // explanation is dropped — an empty explanation adds no value
+                // and would look like a bug to the recruiter.
                 String username = str(item.get("username"));
                 if (username == null || username.isBlank()) continue;
+                String explanation = str(item.get("explanation"));
+                if (explanation == null || explanation.isBlank()) continue;
+
+                String fitLabel = str(item.get("fitLabel"));
+                if (fitLabel == null || !FIT_LABELS.contains(fitLabel)) {
+                    fitLabel = "Partial fit";
+                }
                 out.add(new JobMatchAiResponse.Explanation(
                         username,
                         rank,
-                        nz(str(item.get("fitLabel")), "Partial fit"),
-                        nz(str(item.get("explanation")), ""),
-                        strList(item.get("strengths")),
-                        strList(item.get("gaps")),
+                        fitLabel,
+                        explanation,
+                        capList(strList(item.get("strengths")), 3),
+                        capList(strList(item.get("gaps")), 3),
                         nz(str(item.get("recommendation")), "")
                 ));
             }
@@ -869,13 +973,24 @@ public class GeminiService {
                 sb.append("- files: none (merge/empty commit)\n\n");
                 continue;
             }
+
+            // Truncation guards: the diff request comes from the frontend and
+            // can carry arbitrarily large patches, so cap files per commit and
+            // per-file patch size before the prompt is ever sent to Gemini.
+            int fileCount = 0;
             for (CommitDiffResponse.FileDiff f : files) {
+                if (fileCount >= MAX_COMMIT_DIFF_FILES_PER_COMMIT) {
+                    sb.append("\n… remaining files omitted (file review cap reached)\n");
+                    break;
+                }
+                fileCount++;
                 sb.append("\nFile: ").append(f.getFilename())
                         .append(" [").append(nz(f.getStatus(), "modified"))
                         .append(", +").append(f.getAdditions())
                         .append("/-").append(f.getDeletions()).append("]\n");
                 sb.append("```diff\n");
-                sb.append(nz(f.getPatch(), "(no patch content)")).append("\n```\n");
+                sb.append(truncatePatch(nz(f.getPatch(), "(no patch content)"), MAX_DIFF_PATCH_CHARS));
+                sb.append("\n```\n");
             }
             sb.append("\n");
         }
@@ -902,7 +1017,20 @@ public class GeminiService {
                 keep issues/suggestions specific to the actual patch content; if a patch is
                 truncated or has no content, note that limitation instead of guessing.
                 """);
-        return sb.toString();
+
+        // Hard cap on the total prompt size — a huge multi-commit request must
+        // never produce a megabyte-scale Gemini payload.
+        String prompt = sb.toString();
+        if (prompt.length() > MAX_DIFF_PROMPT_CHARS) {
+            prompt = prompt.substring(0, MAX_DIFF_PROMPT_CHARS)
+                    + "\n… (prompt truncated, remaining diff content omitted)\n";
+        }
+        return prompt;
+    }
+
+    private static String truncatePatch(String patch, int maxChars) {
+        if (patch == null || patch.length() <= maxChars) return patch;
+        return patch.substring(0, maxChars) + "\n… (patch truncated)";
     }
 
     @SuppressWarnings("unchecked")
@@ -917,24 +1045,44 @@ public class GeminiService {
             }
 
             Map<String, Object> root = OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
+
+            // Strict validation of the required top-level fields. A missing
+            // score or summary means the model did not honor the schema — treat
+            // the whole response as unparseable and let the caller fall back to
+            // the deterministic review instead of surfacing half-baked data.
+            Integer overallScore = nullableInt(root.get("overallScore"));
+            String overallSummary = str(root.get("overallSummary"));
+            if (overallScore == null || overallSummary == null || overallSummary.isBlank()) {
+                log.warn("Commit-diff AI output missing required fields (overallScore/overallSummary)");
+                return null;
+            }
+
             CommitDiffReviewResponse res = new CommitDiffReviewResponse();
-            res.setOverallScore(clampScore(num(root.get("overallScore"))));
-            res.setOverallSummary(nz(str(root.get("overallSummary")), ""));
-            res.setKeyIssues(strList(root.get("keyIssues")));
-            res.setStrengths(strList(root.get("strengths")));
-            res.setRecommendations(strList(root.get("recommendations")));
+            res.setOverallScore(clampScore(overallScore));
+            res.setOverallSummary(overallSummary);
+            res.setKeyIssues(capList(strList(root.get("keyIssues")), MAX_KEY_ISSUES));
+            res.setStrengths(capList(strList(root.get("strengths")), MAX_KEY_ISSUES));
+            res.setRecommendations(capList(strList(root.get("recommendations")), MAX_KEY_ISSUES));
 
             List<CommitDiffReviewResponse.FileReview> fileReviews = new ArrayList<>();
             if (root.get("fileReviews") instanceof List<?> list) {
                 for (Object item : list) {
+                    if (fileReviews.size() >= MAX_FILE_REVIEWS) break;
                     if (!(item instanceof Map<?, ?> rawItem)) continue;
                     Map<String, Object> m = (Map<String, Object>) rawItem;
+
+                    // Per-file strictness: a review must name an actual file and
+                    // carry an integer score — skip entries that do not.
+                    String filename = str(m.get("filename"));
+                    Integer score = nullableInt(m.get("score"));
+                    if (filename == null || filename.isBlank() || score == null) continue;
+
                     CommitDiffReviewResponse.FileReview fr = new CommitDiffReviewResponse.FileReview();
-                    fr.setFilename(nz(str(m.get("filename")), "unknown"));
-                    fr.setScore(clampScore(num(m.get("score"))));
+                    fr.setFilename(filename);
+                    fr.setScore(clampScore(score));
                     fr.setSummary(nz(str(m.get("summary")), ""));
-                    fr.setIssues(strList(m.get("issues")));
-                    fr.setSuggestions(strList(m.get("suggestions")));
+                    fr.setIssues(capList(strList(m.get("issues")), MAX_FILE_FINDINGS));
+                    fr.setSuggestions(capList(strList(m.get("suggestions")), MAX_FILE_FINDINGS));
                     fileReviews.add(fr);
                 }
             }
@@ -946,6 +1094,11 @@ public class GeminiService {
         }
     }
 
+    /** Returns the value only when it is a real JSON number, else {@code null}. */
+    private static Integer nullableInt(Object o) {
+        return o instanceof Number n ? n.intValue() : null;
+    }
+
     private static int num(Object o) {
         return o instanceof Number n ? n.intValue() : 0;
     }
@@ -954,42 +1107,48 @@ public class GeminiService {
         return Math.max(0, Math.min(100, score));
     }
 
+    private static List<String> capList(List<String> list, int max) {
+        if (list == null || list.isEmpty()) return List.of();
+        return list.size() > max ? new ArrayList<>(list.subList(0, max)) : list;
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // FALLBACK RESPONSES (when API key is not configured)
     // ═══════════════════════════════════════════════════════════════
 
     private String getFallbackResponse(String taskName) {
+        // End-user copy: never mentions API keys, environment variables, or
+        // backend configuration. The rule-based metrics behind each feature
+        // still render, so the page remains useful without AI.
         return switch (taskName) {
             case "Developer Summary" ->
-                    "AI-powered developer summary requires a Gemini API key. " +
-                    "Set the GEMINI_API_KEY environment variable to enable AI-generated summaries. " +
-                    "In the meantime, the rule-based scoring engine provides detailed metric analysis.";
+                    "AI-powered developer summary isn't available right now. " +
+                    "The scoring metrics below still provide a complete assessment.";
             case "Repository Review" ->
-                    "AI-powered repository review requires a Gemini API key. " +
-                    "The repository health score and quality metrics in the scoring engine provide detailed automated analysis.";
+                    "AI-powered repository review isn't available right now. " +
+                    "The repository health and quality metrics below still provide detailed analysis.";
             case "Skill Analysis" ->
-                    "AI-powered skill analysis requires a Gemini API key. " +
-                    "The language diversity and repository quality metrics provide automated skill assessment.";
+                    "AI-powered skill analysis isn't available right now. " +
+                    "The language and repository metrics below still show the tech stack.";
             case "Career Roadmap" ->
-                    "AI-powered career roadmap requires a Gemini API key. " +
-                    "Set GEMINI_API_KEY to get personalized career guidance based on your GitHub profile.";
+                    "AI-powered career roadmap isn't available right now. " +
+                    "The scoring metrics below still highlight strengths and areas to improve.";
             case "Interview Readiness" ->
-                    "AI-powered interview readiness assessment requires a Gemini API key.";
+                    "AI-powered interview readiness assessment isn't available right now. " +
+                    "The metrics below still highlight role-relevant strengths.";
             case "Developer Comparison" ->
-                    "AI-powered developer comparison requires a Gemini API key. " +
-                    "The comparison page already provides detailed side-by-side metric analysis.";
+                    "AI-powered developer comparison isn't available right now. " +
+                    "The side-by-side metric analysis below is still fully detailed.";
             case "Enhanced Insights" -> null;
             case "Code Quality Review" ->
-                    "AI-powered code quality review requires a Gemini API key. " +
-                    "The commit analytics module already provides rule-based code quality metrics " +
-                    "(message quality, conventional commit rate, commit size, and weekly activity).";
+                    "AI-powered code quality review isn't available right now. " +
+                    "The commit analytics below still measure message quality, commit size, and consistency.";
             case "Job Match" ->
-                    "AI-powered job match requires a Gemini API key. " +
-                    "The deterministic match engine already ranks candidates by skill fit and developer score.";
+                    "AI-powered job match isn't available right now. " +
+                    "The deterministic match engine still ranks candidates by skill fit and developer score.";
             case "Organization Review" ->
-                    "AI-powered organization review requires a Gemini API key. " +
-                    "The organization analytics module already provides rule-based team metrics " +
-                    "(repo stats, language stack, contributors, activity).";
+                    "AI-powered organization review isn't available right now. " +
+                    "The organization analytics below still cover repo stats, language stack, contributors, and team activity.";
             default -> null;
         };
     }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,7 @@ export function Login() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { login } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -32,7 +33,13 @@ export function Login() {
     setLoading(true);
     try {
       await login(email, password);
-      navigate("/dashboard");
+      // Return to the page the user originally tried to open (e.g. /compare,
+      // /ai, /reports/:username) when they were redirected here by RequireAuth.
+      const from = location.state as { from?: { pathname?: string; search?: string } } | null;
+      const redirectTo = from?.from?.pathname
+        ? from.from.pathname + (from.from.search ?? "")
+        : "/dashboard";
+      navigate(redirectTo, { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Login failed");
     } finally {

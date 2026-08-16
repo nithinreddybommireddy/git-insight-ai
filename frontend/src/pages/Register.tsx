@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -25,6 +25,7 @@ export function Register() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
   const { register } = useAuth();
 
   const passwordChecks = {
@@ -46,7 +47,12 @@ export function Register() {
     setLoading(true);
     try {
       await register(name, email, password);
-      navigate("/dashboard");
+      // Return to the page the user originally tried to open, if any.
+      const from = location.state as { from?: { pathname?: string; search?: string } } | null;
+      const redirectTo = from?.from?.pathname
+        ? from.from.pathname + (from.from.search ?? "")
+        : "/dashboard";
+      navigate(redirectTo, { replace: true });
     } catch (err: any) {
       toast.error(err.message || "Registration failed");
     } finally {

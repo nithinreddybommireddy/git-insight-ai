@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,11 +25,46 @@ import {
 
 export function ReportsPage() {
   const navigate = useNavigate();
-  const [username, setUsername] = useState("");
+  const { username: usernameParam } = useParams<{ username?: string }>();
+  const [username, setUsername] = useState(usernameParam ?? "");
   const [loading, setLoading] = useState(false);
   const [reportData, setReportData] = useState<any>(null);
   const [history, setHistory] = useState<ScoreSnapshot[]>([]);
   const [stats, setStats] = useState<any>(null);
+
+  const generate = useCallback(async (u: string) => {
+    if (!u.trim()) {
+      toast.error("Enter a GitHub username");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await reportsApi.generateReport(u.trim());
+      if (res.success) {
+        setReportData(res.data);
+        setHistory(res.data.history || []);
+        toast.success(`Report generated for ${u.trim()}`);
+      } else {
+        toast.error(res.message || "Failed to generate report");
+      }
+    } catch (err: any) {
+      if (err?.response?.status === 401) {
+        toast.error("Please sign in to generate a report.");
+        navigate("/login");
+      } else {
+        toast.error(err.message || "Failed to generate report");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
+  const handleGenerate = useCallback(async () => {
+    const u = username.trim();
+    if (u) setUsername(u);
+    await generate(u);
+  }, [username, generate]);
 
   // Load stats on mount
   useEffect(() => {
@@ -38,29 +73,14 @@ export function ReportsPage() {
     }).catch(() => {});
   }, []);
 
-  const handleGenerate = useCallback(async () => {
-    const u = username.trim();
-    if (!u) {
-      toast.error("Enter a GitHub username");
-      return;
+  // Deep link: /reports/:username (e.g. "Download Report" from a profile card)
+  // auto-generates the report for that developer on arrival.
+  useEffect(() => {
+    if (usernameParam) {
+      setUsername(usernameParam);
+      generate(usernameParam);
     }
-
-    setLoading(true);
-    try {
-      const res = await reportsApi.generateReport(u);
-      if (res.success) {
-        setReportData(res.data);
-        setHistory(res.data.history || []);
-        toast.success(`Report generated for ${u}`);
-      } else {
-        toast.error(res.message || "Failed to generate report");
-      }
-    } catch (err: any) {
-      toast.error(err.message || "Failed to generate report");
-    } finally {
-      setLoading(false);
-    }
-  }, [username]);
+  }, [usernameParam, generate]);
 
   const handleRefresh = async () => {
     if (!reportData) return;

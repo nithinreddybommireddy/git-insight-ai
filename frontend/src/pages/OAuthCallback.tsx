@@ -57,7 +57,7 @@ export function OAuthCallback() {
           ) : (
             <div className="flex flex-col items-center gap-4 py-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
-              <p className="text-sm text-muted-foreground">Completing GitHub sign-in…</p>
+              <p className="text-sm text-muted-foreground">Signing you in…</p>
             </div>
           )}
         </motion.div>

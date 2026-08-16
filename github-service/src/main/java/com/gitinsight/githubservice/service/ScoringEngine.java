@@ -7,6 +7,8 @@ import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubContributor;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.LanguageBreakdown;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -24,6 +26,8 @@ import java.util.stream.Collectors;
  */
 @Service
 public class ScoringEngine {
+
+    private static final Logger log = LoggerFactory.getLogger(ScoringEngine.class);
 
     // ═══════════════════════════════════════════════════
     // CONFIGURABLE WEIGHTS — change these to rebalance
@@ -814,7 +818,13 @@ public class ScoringEngine {
                 Instant pushed = ZonedDateTime.parse(r.getPushedAt()).toInstant();
                 return Duration.between(pushed, Instant.now()).toDays();
             }
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            // A malformed pushedAt would otherwise silently skew the health
+            // metric — log the actual value so API/format regressions surface
+            // instead of being masked by the 365-day fallback.
+            log.warn("Failed to parse pushedAt '{}' for repo {} — falling back to 365 days",
+                    r.getPushedAt(), r.getFullName(), e);
+        }
         return 365;
     }
 

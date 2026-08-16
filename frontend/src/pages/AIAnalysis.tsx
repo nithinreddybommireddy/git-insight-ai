@@ -322,7 +322,7 @@ export function AIAnalysis() {
                     <div className="px-6 py-2 bg-gradient-to-r from-amber-500/5 to-orange-500/5 border-b border-amber-500/10">
                       <p className="text-[11px] text-amber-400/80 flex items-center gap-1.5">
                         <Sparkles className="w-3 h-3" />
-                        Running in fallback mode — set GEMINI_API_KEY for AI-powered responses
+                        AI insights are unavailable right now — showing rule-based analysis
                       </p>
                     </div>
                   )}

@@ -3,8 +3,9 @@ import { useEffect, type ReactNode } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "react-hot-toast";
-import { ThemeProvider } from "@/hooks/useTheme";
-import { AuthProvider, useAuth } from "@/hooks/useAuth";
+import { ThemeProvider } from "@/components/ThemeProvider";
+import { AuthProvider } from "@/components/AuthProvider";
+import { useAuth } from "@/hooks/useAuth";
 import { Navbar } from "@/components/Navbar";
 import { Footer } from "@/components/Footer";
 import { Landing } from "@/pages/Landing";
@@ -32,6 +33,7 @@ const queryClient = new QueryClient({
 
 function RequireAuth({ children }: { children: ReactNode }) {
   const { isAuthenticated, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -42,7 +44,9 @@ function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+    // Preserve the intended destination so login/register can return the user
+    // to the page they originally tried to open (pathname + query params).
+    return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
   return <>{children}</>;
@@ -77,7 +81,14 @@ function AppRoutes() {
             <Routes location={location}>
           <Route path="/" element={<Landing />} />
           <Route path="/search" element={<SearchResults />} />
-          <Route path="/compare" element={<ComparePage />} />
+          <Route
+            path="/compare"
+            element={
+              <RequireAuth>
+                <ComparePage />
+              </RequireAuth>
+            }
+          />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
           <Route path="/auth/callback" element={<OAuthCallback />} />
@@ -106,7 +117,14 @@ function AppRoutes() {
             }
           />
           <Route path="/org/:orgName" element={<OrgAnalytics />} />
-          <Route path="/ai" element={<AIAnalysis />} />
+          <Route
+            path="/ai"
+            element={
+              <RequireAuth>
+                <AIAnalysis />
+              </RequireAuth>
+            }
+          />
           <Route
             path="/reports"
             element={
@@ -115,7 +133,14 @@ function AppRoutes() {
               </RequireAuth>
             }
           />
-          <Route path="/reports/:username" element={<ReportsPage />} />
+          <Route
+            path="/reports/:username"
+            element={
+              <RequireAuth>
+                <ReportsPage />
+              </RequireAuth>
+            }
+          />
             </Routes>
           </motion.div>
         </AnimatePresence>

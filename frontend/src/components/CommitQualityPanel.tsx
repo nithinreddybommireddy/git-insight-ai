@@ -118,7 +118,7 @@ export function CommitQualityPanel({ analytics, loading, username }: CommitQuali
         toast.success(
           res.data.aiEnabled
             ? "AI commit-diff review generated"
-            : "Rule-based diff review generated (set GEMINI_API_KEY for AI)"
+            : "Rule-based diff review generated (AI unavailable)"
         );
       } else {
         toast.error(res.message || "Failed to generate commit-diff review");

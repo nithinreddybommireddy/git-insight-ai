@@ -19,6 +19,12 @@
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-starter-netflix-eureka-server</artifactId>
         </dependency>
+        <!-- Shared DTOs (ApiResponse) for the /api/health endpoint. -->
+        <dependency>
+            <groupId>com.gitinsight</groupId>
+            <artifactId>common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>

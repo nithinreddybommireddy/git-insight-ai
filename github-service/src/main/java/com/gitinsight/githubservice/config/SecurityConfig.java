@@ -2,7 +2,7 @@ package com.gitinsight.githubservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.dto.response.ApiResponse;
-import com.gitinsight.githubservice.security.JwtAuthFilter;
+import com.gitinsight.common.security.JwtAuthFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

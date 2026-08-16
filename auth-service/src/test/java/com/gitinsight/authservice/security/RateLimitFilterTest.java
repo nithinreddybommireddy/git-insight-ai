@@ -14,6 +14,10 @@ class RateLimitFilterTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final FilterChain chain = mock(FilterChain.class);
 
+    private RateLimitFilter filter(int budget) {
+        return new RateLimitFilter(budget, objectMapper, new InMemoryFixedWindowRateLimiter(60_000L));
+    }
+
     private MockHttpServletRequest request(String uri, String ip, String forwardedFor) {
         MockHttpServletRequest req = new MockHttpServletRequest("POST", uri);
         req.setRemoteAddr(ip);
@@ -25,7 +29,7 @@ class RateLimitFilterTest {
 
     @Test
     void blocksRequestsBeyondBudgetPerIpAndPath() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(3, objectMapper);
+        RateLimitFilter filter = filter(3);
 
         for (int i = 0; i < 3; i++) {
             MockHttpServletResponse response = new MockHttpServletResponse();
@@ -49,7 +53,7 @@ class RateLimitFilterTest {
 
     @Test
     void honorsXForwardedForFirstHop() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(1, objectMapper);
+        RateLimitFilter filter = filter(1);
 
         MockHttpServletResponse first = new MockHttpServletResponse();
         filter.doFilter(request("/api/auth/login", "127.0.0.1", "203.0.113.9, 10.0.0.1"), first, chain);
@@ -63,7 +67,7 @@ class RateLimitFilterTest {
 
     @Test
     void doesNotRateLimitNonCredentialEndpoints() throws Exception {
-        RateLimitFilter filter = new RateLimitFilter(1, objectMapper);
+        RateLimitFilter filter = filter(1);
         MockHttpServletResponse response = new MockHttpServletResponse();
         filter.doFilter(request("/api/auth/me", "10.0.0.1", null), response, chain);
         assertThat(response.getStatus()).isEqualTo(200);
