@@ -12,13 +12,14 @@ import {
   TrendingUp,
   Users,
   ArrowRight,
-  Activity,
-  Rocket,
   Zap,
   Sparkles,
   CheckCircle2,
   Building2,
+  Code2,
+  Network,
 } from "lucide-react";
+import { HeroIllustration } from "@/components/HeroIllustration";
 
 const containerVariants = {
   hidden: { opacity: 0 },
@@ -32,6 +33,13 @@ const itemVariants = {
   hidden: { opacity: 0, y: 20 },
   visible: { opacity: 1, y: 0 },
 };
+
+const heroPills = [
+  { label: "Profile Analysis", icon: BarChart3, color: "#3b82f6" },
+  { label: "Code Quality", icon: Code2, color: "#8b5cf6" },
+  { label: "Contribution Trends", icon: Network, color: "#10b981" },
+  { label: "AI Insights", icon: Brain, color: "#f97316" },
+];
 
 const features = [
   {
@@ -84,13 +92,6 @@ const howItWorks = [
   { step: "03", title: "Get Actionable Insights", description: "View scores, charts, and recommendations instantly.", icon: TrendingUp },
 ];
 
-const stats = [
-  { label: "Profiles Analyzed", value: "1,000+", icon: Search },
-  { label: "GitHub Data Points", value: "50K+", icon: Activity },
-  { label: "Active Users", value: "500+", icon: Users },
-  { label: "Developer Score", value: "AI-Powered", icon: Sparkles },
-];
-
 export function Landing() {
   const [username, setUsername] = useState("");
   const [orgName, setOrgName] = useState("");
@@ -113,131 +114,141 @@ export function Landing() {
   return (
     <div className="min-h-screen overflow-x-clip">
       {/* Hero Section */}
-      <section className="relative min-h-[90vh] flex items-center justify-center overflow-hidden">
-        <div className="absolute inset-0 animated-gradient opacity-25" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-primary/25 via-transparent to-transparent" />
-        <div className="absolute top-1/4 left-1/4 w-64 h-64 rounded-full bg-primary/15 blur-3xl animate-pulse" />
-        <div className="absolute bottom-1/4 right-1/4 w-96 h-96 rounded-full bg-accent/15 blur-3xl animate-pulse delay-1000" />
+      <section className="relative overflow-hidden">
+        {/* Subtle navy vignette — clean, no animated gradients or glow blobs */}
+        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(37,99,235,0.10),_transparent_55%)]" />
 
         <motion.div
           variants={containerVariants}
           initial="hidden"
           animate="visible"
-          className="relative z-10 max-w-4xl mx-auto px-4 text-center"
+          className="relative z-10 max-w-7xl mx-auto px-4 pt-24 pb-14 lg:pt-28 lg:pb-16"
         >
-          <motion.div variants={itemVariants} className="mb-6 flex justify-center">
-            <img
-              src="/icon.svg"
-              alt="GitInsight AI logo"
-              className="w-20 h-20 rounded-2xl ring-1 ring-primary/20 shadow-2xl shadow-primary/20"
-            />
-          </motion.div>
-
-          <motion.div variants={itemVariants} className="mb-6">
-            <span className="inline-flex items-center gap-2 px-4 py-2 rounded-full glass text-sm text-muted-foreground border border-primary/20">
-              <Sparkles className="w-4 h-4 text-primary" />
-              AI-Powered GitHub Analytics Platform
-            </span>
-          </motion.div>
-
-          <motion.h1 variants={itemVariants} className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tight mb-6 leading-tight">
-            <span className="gradient-text">GitInsight AI</span>
-            <br />
-            <span className="text-foreground">
-              Understand Any Developer's GitHub Profile
-            </span>
-          </motion.h1>
-
-          <motion.p variants={itemVariants} className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10 leading-relaxed">
-            Analyze GitHub profiles with AI-powered insights. Get developer scores,
-            contribution analytics, repository health checks, and portfolio reviews
-            in seconds.
-          </motion.p>
-
-          <motion.form variants={itemVariants} onSubmit={handleSearch} className="max-w-xl mx-auto">
-            <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-primary via-accent to-primary rounded-2xl opacity-25 blur group-hover:opacity-50 transition-opacity duration-500" />
-              <div className="relative flex items-center glass-strong rounded-2xl p-1.5">
-                <Search className="w-5 h-5 ml-4 text-muted-foreground shrink-0" />
-                <Input
-                  type="text"
-                  placeholder="Enter a GitHub username..."
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  className="flex-1 border-0 bg-transparent focus-visible:ring-0 text-base"
-                />
-                <Button type="submit" variant="primary" size="lg" className="shrink-0 gap-2 rounded-xl" disabled={!username.trim()}>
-                  Analyze
-                  <ArrowRight className="w-4 h-4" />
-                </Button>
+          <div className="grid grid-cols-1 lg:grid-cols-[0.85fr_1.15fr] gap-12 lg:gap-14 items-center">
+            {/* Illustration — left on desktop, after the form on mobile */}
+            <motion.div variants={itemVariants} className="order-2 lg:order-1 flex justify-center">
+              <div className="w-full max-w-[440px] lg:max-w-[500px]">
+                <HeroIllustration />
               </div>
-            </div>
-          </motion.form>
+            </motion.div>
 
-          <motion.p variants={itemVariants} className="mt-4 text-xs text-muted-foreground">
-            Try it now &mdash; enter any public GitHub username, e.g. &quot;nithinreddybommireddy&quot;
-          </motion.p>
+            {/* Content — right column */}
+            <motion.div variants={itemVariants} className="order-1 lg:order-2 text-center lg:text-left">
+              {/* Eyebrow */}
+              <motion.div variants={itemVariants} className="mb-4">
+                <span className="inline-flex items-center gap-2 rounded-full border border-[#0a84ff]/25 bg-[#0a84ff]/10 px-3.5 py-1.5 text-xs font-semibold tracking-wide text-[#2f7bd6] dark:text-[#9cc6ff] shadow-[0_0_20px_rgba(10,132,255,0.12)]">
+                  <Sparkles className="w-3.5 h-3.5" />
+                  AI-Powered GitHub Analytics Platform
+                </span>
+              </motion.div>
 
-          {/* Organization search */}
-          <motion.div variants={itemVariants} className="mt-6">
-            <p className="text-[11px] text-muted-foreground mb-2 flex items-center justify-center gap-1.5">
-              <Building2 className="w-3.5 h-3.5 text-primary" />
-              Analyzing a team instead? Enter a GitHub organization:
+              {/* Product name — above the heading, smaller than it, brand colors */}
+              <motion.p variants={itemVariants} className="text-xl sm:text-2xl font-bold tracking-tight mb-1.5">
+                <span className="text-[#1c2f6b] dark:text-[#a8c4e0]">GitInsight</span>
+                <span className="text-[#0a84ff]">-AI</span>
+              </motion.p>
+
+              {/* Main heading */}
+              <motion.h1 variants={itemVariants} className="text-4xl sm:text-5xl font-extrabold tracking-tight leading-[1.1] mb-4 text-slate-900 dark:text-white">
+                Understand Any Developer&apos;s{" "}
+                <span className="text-[#0a84ff]">GitHub Profile</span>
+              </motion.h1>
+
+              {/* Supporting text */}
+              <motion.p variants={itemVariants} className="text-base sm:text-lg text-slate-600 dark:text-slate-400 max-w-xl mx-auto lg:mx-0 mb-6 leading-relaxed">
+                Analyze repositories, contributions, code quality, activity trends and AI-generated insights.
+              </motion.p>
+
+              {/* Feature cards — compact 2x2 grid */}
+              <motion.div variants={itemVariants} className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-xl mx-auto lg:mx-0 mb-7">
+                {heroPills.map((pill) => (
+                  <div
+                    key={pill.label}
+                    className="flex items-center gap-3 rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 px-3.5 py-3 transition-colors duration-200 hover:border-[#0a84ff]/40 hover:bg-[#0a84ff]/[0.04] dark:hover:bg-white/[0.08]"
+                  >
+                    <div className="w-8 h-8 shrink-0 rounded-lg bg-[#0a84ff]/10 dark:bg-white/10 flex items-center justify-center">
+                      <pill.icon className="w-4 h-4" style={{ color: pill.color }} />
+                    </div>
+                    <span className="text-sm font-medium text-slate-800 dark:text-slate-100">{pill.label}</span>
+                  </div>
+                ))}
+              </motion.div>
+
+              {/* GitHub analysis — the primary action */}
+              <motion.form variants={itemVariants} onSubmit={handleSearch} className="max-w-xl mx-auto lg:mx-0 mb-2">
+                <div className="flex items-center rounded-xl border border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 shadow-sm transition-all focus-within:border-[#0a84ff]/60 focus-within:ring-4 focus-within:ring-[#0a84ff]/10">
+                  <Search className="w-5 h-5 ml-4 text-slate-400 shrink-0" />
+                  <Input
+                    type="text"
+                    placeholder="Enter a GitHub username..."
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="h-12 flex-1 border-0 bg-transparent px-3 focus-visible:ring-0 text-[15px]"
+                  />
+                  <Button type="submit" variant="primary" size="lg" className="shrink-0 gap-1.5 rounded-lg mr-1.5 h-10 px-5" disabled={!username.trim()}>
+                    Analyze
+                    <ArrowRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </motion.form>
+
+              <motion.p variants={itemVariants} className="text-xs text-slate-500 dark:text-slate-500 mb-5">
+                Try it now &mdash; enter any public GitHub username, e.g. &quot;nithinreddybommireddy&quot;
+              </motion.p>
+
+              {/* Organization analysis — visually secondary */}
+              <motion.div variants={itemVariants} className="mb-6">
+                <p className="text-[11px] text-slate-500 dark:text-slate-500 mb-1.5 flex items-center justify-center lg:justify-start gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-[#0a84ff]/70" />
+                  Analyzing a team instead? Enter a GitHub organization:
+                </p>
+                <form onSubmit={handleOrgSearch} className="max-w-md mx-auto lg:mx-0">
+                  <div className="flex items-center rounded-lg border border-slate-200/80 dark:border-white/10 bg-white/70 dark:bg-white/5 transition-all focus-within:border-[#0a84ff]/50 focus-within:ring-4 focus-within:ring-[#0a84ff]/10">
+                    <Building2 className="w-4 h-4 ml-3 text-slate-400 shrink-0" />
+                    <Input
+                      type="text"
+                      placeholder="Organization name (e.g. vercel, facebook, google)"
+                      value={orgName}
+                      onChange={(e) => setOrgName(e.target.value)}
+                      className="h-10 flex-1 border-0 bg-transparent px-2.5 focus-visible:ring-0 text-sm"
+                    />
+                    <Button type="submit" variant="ghost" size="sm" className="shrink-0 gap-1 mr-1 text-xs text-slate-500 dark:text-slate-400 hover:text-[#0a84ff]" disabled={!orgName.trim()}>
+                      Analyze org
+                      <ArrowRight className="w-3 h-3" />
+                    </Button>
+                  </div>
+                </form>
+              </motion.div>
+
+              {/* Trust indicators — one clean row, subtle */}
+              <motion.div variants={itemVariants} className="flex flex-wrap items-center justify-center lg:justify-start gap-x-5 gap-y-2">
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 dark:text-emerald-400/90" />
+                  Free to use
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 dark:text-emerald-400/90" />
+                  No login required
+                </div>
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500/80 dark:text-emerald-400/90" />
+                  Real GitHub data
+                </div>
+              </motion.div>
+            </motion.div>
+          </div>
+
+          {/* Bottom tagline — subtle, anchored to the hero */}
+          <motion.div variants={itemVariants} className="mt-12 lg:mt-14 flex items-center justify-center gap-4">
+            <div className="h-px w-16 sm:w-40 bg-slate-300 dark:bg-slate-700" />
+            <p className="text-[11px] font-semibold tracking-[0.28em] text-slate-500 dark:text-slate-500">
+              ANALYZE<span className="text-[#0a84ff]"> • </span>UNDERSTAND
+              <span className="text-[#0a84ff]"> • </span>HIRE
+              <span className="text-[#0a84ff]"> • </span>GROW
             </p>
-            <form onSubmit={handleOrgSearch} className="max-w-md mx-auto">
-              <div className="relative flex items-center glass rounded-xl p-1">
-                <Building2 className="w-4 h-4 ml-3 text-muted-foreground shrink-0" />
-                <Input
-                  type="text"
-                  placeholder="Organization name (e.g. vercel, facebook, google)"
-                  value={orgName}
-                  onChange={(e) => setOrgName(e.target.value)}
-                  className="flex-1 border-0 bg-transparent focus-visible:ring-0 text-sm"
-                />
-                <Button type="submit" variant="outline" size="sm" className="shrink-0 gap-1.5 rounded-lg" disabled={!orgName.trim()}>
-                  Analyze org
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Button>
-              </div>
-            </form>
-          </motion.div>
-
-          {/* Hero CTAs */}
-          <motion.div variants={itemVariants} className="flex items-center justify-center gap-4 mt-8">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              Free to use
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              No login required
-            </div>
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-              Real GitHub data
-            </div>
+            <div className="h-px w-16 sm:w-40 bg-slate-300 dark:bg-slate-700" />
           </motion.div>
         </motion.div>
-      </section>
-
-      {/* Stats Counter */}
-      <section className="relative mt-10 sm:mt-12 z-10 px-4">
-        <div className="max-w-4xl mx-auto">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, ease: "easeOut", delay: 0.25 }}
-            className="grid grid-cols-2 md:grid-cols-4 gap-4"
-          >
-            {stats.map((stat) => (
-              <Card key={stat.label} className="text-center py-6 hover:scale-[1.02] transition-transform duration-200">
-                <stat.icon className="w-6 h-6 mx-auto mb-2 text-primary" />
-                <p className="text-xl font-bold text-foreground">{stat.value}</p>
-                <p className="text-xs text-muted-foreground mt-1">{stat.label}</p>
-              </Card>
-            ))}
-          </motion.div>
-        </div>
       </section>
 
       {/* Features Section */}
@@ -333,9 +344,11 @@ export function Landing() {
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.5, ease: "easeOut" }}
           >
-            <div className="w-16 h-16 rounded-2xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-              <Rocket className="w-8 h-8 text-primary" />
-            </div>
+            <img
+              src="/logo.svg"
+              alt="GitInsight-AI — Analyze. Understand. Grow."
+              className="w-full max-w-sm mx-auto mb-8 rounded-3xl shadow-2xl shadow-black/40 ring-1 ring-primary/20"
+            />
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">
               Ready to Explore Developer Analytics?
             </h2>

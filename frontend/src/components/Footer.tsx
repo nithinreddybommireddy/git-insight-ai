@@ -1,6 +1,5 @@
 import { Link } from "react-router-dom";
 import {
-  Code2,
   Heart,
   ExternalLink,
   Star,
@@ -49,12 +48,14 @@ export function Footer() {
           {/* Brand */}
           <div className="lg:col-span-1 space-y-4">
             <Link to="/" className="flex items-center gap-2.5 group w-fit">
-              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-primary to-accent flex items-center justify-center transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30">
-                <Code2 className="w-5 h-5 text-white" />
-              </div>
-              <span className="text-lg font-bold">
-                <span className="gradient-text">GitInsight</span>
-                <span className="text-foreground"> AI</span>
+              <img
+                src="/icon.svg"
+                alt="GitInsight AI"
+                className="w-9 h-9 rounded-xl ring-1 ring-primary/20 transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30"
+              />
+              <span className="text-lg font-bold tracking-tight">
+                <span className="text-[#1c2f6b] dark:text-[#a8c4e0]">GitInsight</span>
+                <span className="text-[#0a84ff]">-AI</span>
               </span>
             </Link>
             <p className="text-sm text-muted-foreground leading-relaxed max-w-xs">
@@ -147,16 +148,6 @@ export function Footer() {
                   </a>
                 </li>
               ))}
-              <li>
-                <Link
-                  to="/ai"
-                  className="group inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-primary transition-colors"
-                >
-                  <Brain className="w-4 h-4 opacity-70 group-hover:opacity-100" />
-                  Try AI Insights
-                  <ArrowRight className="w-3.5 h-3.5 opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 transition-all duration-200" />
-                </Link>
-              </li>
             </ul>
           </div>
         </div>

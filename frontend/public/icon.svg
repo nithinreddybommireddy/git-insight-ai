@@ -1,42 +1,46 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="GitInsight AI">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="GitInsight-AI">
   <defs>
-    <linearGradient id="gi-bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#0d1224"/>
-      <stop offset="1" stop-color="#000000"/>
+    <!-- G: dark blue on the left, brighter blue on the right (both clearly visible on dark UI) -->
+    <linearGradient id="gi-g" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#1a2d66"/>
+      <stop offset="1" stop-color="#2e5bd4"/>
     </linearGradient>
   </defs>
 
-  <!-- Black rounded tile -->
-  <rect width="512" height="512" rx="108" fill="url(#gi-bg)"/>
+  <!-- Pure black rounded tile -->
+  <rect width="512" height="512" rx="112" fill="#000000"/>
 
-  <!-- "G": ring with a gap on the right + crossbar -->
-  <g fill="none" stroke-linecap="round">
-    <circle cx="188" cy="256" r="120" stroke="#3B5BDB" stroke-width="64"
-            stroke-dasharray="620 134" transform="rotate(-16 188 256)"/>
-    <path d="M 240 256 L 330 256" stroke="#3B5BDB" stroke-width="64"/>
+  <!-- "G": bold rounded ring with a right-side opening + crossbar (proper path, no dash hacks) -->
+  <g fill="none" stroke="url(#gi-g)" stroke-width="64" stroke-linecap="round">
+    <path d="M 200 116 A 140 140 0 1 0 340 256"/>
+    <path d="M 340 256 L 292 256"/>
   </g>
 
-  <!-- GitHub octocat inside the "G" counter (darker navy) -->
-  <g transform="translate(144 216) scale(4.4)">
-    <path fill="#16265F" fill-rule="evenodd"
+  <!-- GitHub octocat inside the G counter (dark navy silhouette) -->
+  <g transform="translate(163 213) scale(5.6)">
+    <path fill="#16295e" fill-rule="evenodd"
           d="M9.356 1.85C5.05 1.85 1.57 5.356 1.57 9.694a7.84 7.84 0 0 0 5.324 7.44c.387.079.528-.168.528-.376 0-.182-.013-.805-.013-1.454-2.165.467-2.616-.935-2.616-.935-.349-.91-.864-1.143-.864-1.143-.71-.48.051-.48.051-.48.787.051 1.2.805 1.2.805.695 1.194 1.817.857 2.268.649.064-.507.27-.857.49-1.052-1.728-.182-3.545-.857-3.545-3.87 0-.857.31-1.558.8-2.104-.078-.195-.349-1 .077-2.078 0 0 .657-.208 2.14.805a7.5 7.5 0 0 1 1.946-.26c.657 0 1.328.092 1.946.26 1.483-1.013 2.14-.805 2.14-.805.426 1.078.155 1.883.078 2.078.502.546.799 1.247.799 2.104 0 3.013-1.818 3.675-3.558 3.87.284.247.528.714.528 1.454 0 1.052-.012 1.896-.012 2.156 0 .208.142.455.528.377a7.84 7.84 0 0 0 5.324-7.441c.013-4.338-3.48-7.844-7.773-7.844"
           clip-rule="evenodd"/>
   </g>
 
-  <!-- Bar chart: left lighter, right darker and taller -->
-  <rect x="352" y="300" width="44" height="96" rx="22" fill="#5B8DEF"/>
-  <rect x="408" y="238" width="44" height="158" rx="22" fill="#2E4BD7"/>
+  <!-- "i" bars right of the G: left lighter cyan-blue & shorter, right vibrant royal blue & taller -->
+  <rect x="376" y="240" width="38" height="96" rx="19" fill="#41b0f2"/>
+  <rect x="428" y="192" width="38" height="152" rx="19" fill="#2f4be0"/>
 
-  <!-- Upward trend line with nodes and arrowhead -->
-  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M160 325 L240 285 L310 252 L378 220 L448 182"
-          stroke="#5B8DEF" stroke-width="12"/>
-    <!-- arrowhead -->
-    <path d="M448 182 l-16 16 M448 182 l-2 -22" stroke="#5B8DEF" stroke-width="12"/>
-  </g>
-  <g fill="#101E4F" stroke="#5B8DEF" stroke-width="5">
-    <circle cx="240" cy="285" r="10"/>
-    <circle cx="310" cy="252" r="10"/>
-    <circle cx="378" cy="220" r="10"/>
+  <!-- Dark upward trend line overlaid across the G and bars, ending up-right -->
+  <path d="M 128 362 L 218 322 L 312 272 L 402 222"
+        fill="none" stroke="#0d1526" stroke-width="14"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Dark arrowhead pointing up-right -->
+  <path d="M 402 222 l -16 12 M 402 222 l -4 -20"
+        fill="none" stroke="#0d1526" stroke-width="14"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Three dark circular data nodes along the path -->
+  <g fill="#0d1526">
+    <circle cx="128" cy="362" r="11"/>
+    <circle cx="218" cy="322" r="11"/>
+    <circle cx="312" cy="272" r="11"/>
   </g>
 </svg>

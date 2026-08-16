@@ -34,10 +34,8 @@ export function Navbar() {
   return (
     <nav
       className={cn(
-        "fixed top-0 left-0 right-0 z-50 transition-all duration-500",
-        scrolled
-          ? "glass-strong shadow-lg shadow-black/10 dark:shadow-black/30"
-          : "bg-transparent"
+        "fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/85 backdrop-blur-md transition-shadow duration-300",
+        scrolled && "shadow-sm shadow-black/5"
       )}
     >
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -47,11 +45,11 @@ export function Navbar() {
             <img
               src="/icon.svg"
               alt="GitInsight AI"
-              className="w-9 h-9 rounded-xl ring-1 ring-primary/20 transition-all duration-300 group-hover:scale-110 group-hover:shadow-lg group-hover:shadow-primary/30"
+              className="w-9 h-9 shrink-0 transition-transform duration-300 group-hover:scale-105"
             />
-            <span className="text-lg font-bold">
-              <span className="gradient-text">GitInsight</span>
-              <span className="text-foreground"> AI</span>
+            <span className="text-lg font-bold tracking-tight">
+              <span className="text-[#1c2f6b] dark:text-[#a8c4e0]">GitInsight</span>
+              <span className="text-[#0a84ff]">-AI</span>
             </span>
           </Link>
 
@@ -68,7 +66,8 @@ export function Navbar() {
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200"
             >
               Search
-            </Link>            <Link
+            </Link>
+            <Link
               to="/compare"
               className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/50 rounded-xl transition-all duration-200"
             >
