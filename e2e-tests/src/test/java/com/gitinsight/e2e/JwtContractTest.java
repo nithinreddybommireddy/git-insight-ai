@@ -40,6 +40,22 @@ class JwtContractTest {
     }
 
     @Test
+    void tokenTypesAreSeparatedAndEnforced() {
+        String access = AUTH.generateToken(42L, "user@example.com", "USER");
+        String refresh = AUTH.generateRefreshToken(42L);
+
+        assertThat(AUTH.getTokenType(access)).isEqualTo(JwtUtil.TOKEN_TYPE_ACCESS);
+        assertThat(AUTH.getTokenType(refresh)).isEqualTo(JwtUtil.TOKEN_TYPE_REFRESH);
+
+        // A refresh token must not be usable as a bearer/access token...
+        assertThat(GITHUB.getTokenType(refresh)).isEqualTo(JwtUtil.TOKEN_TYPE_REFRESH);
+        assertThat(JwtUtil.TOKEN_TYPE_ACCESS.equals(GITHUB.getTokenType(refresh))).isFalse();
+        // ...and an access token must not be exchangeable at /refresh (the
+        // auth-service enforces this via AuthService.refresh).
+        assertThat(JwtUtil.TOKEN_TYPE_REFRESH.equals(GITHUB.getTokenType(access))).isFalse();
+    }
+
+    @Test
     void tokenSignedWithDifferentSecretIsRejected() {
         JwtUtil other = new JwtUtil("a-completely-different-secret-key-at-least-32-bytes-long");
 

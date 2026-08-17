@@ -73,7 +73,9 @@ public class AuthService {
     }
 
     public AuthResponse refresh(String refreshToken) {
-        if (!jwtUtil.validateToken(refreshToken)) {
+        if (!jwtUtil.validateToken(refreshToken)
+                || !JwtUtil.TOKEN_TYPE_REFRESH.equals(jwtUtil.getTokenType(refreshToken))) {
+            // An access token must never be accepted at /refresh.
             throw new RuntimeException("Invalid or expired refresh token");
         }
 

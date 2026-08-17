@@ -75,10 +75,17 @@ public class JwtUtil {
         this(secret, DEFAULT_MIN_SECRET_BYTES);
     }
 
+    /** Token type claim: {@code access} tokens authorize API requests. */
+    public static final String TOKEN_TYPE_ACCESS = "access";
+
+    /** Token type claim: {@code refresh} tokens may only be exchanged at /refresh. */
+    public static final String TOKEN_TYPE_REFRESH = "refresh";
+
     public String generateToken(Long userId, String email, String role) {
         requireIssuer();
         return Jwts.builder()
                 .subject(userId.toString())
+                .claim("type", TOKEN_TYPE_ACCESS)
                 .claim("email", email)
                 .claim("role", role)
                 .issuedAt(new Date())
@@ -91,10 +98,24 @@ public class JwtUtil {
         requireIssuer();
         return Jwts.builder()
                 .subject(userId.toString())
+                .claim("type", TOKEN_TYPE_REFRESH)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + refreshExpirationMs))
                 .signWith(secretKey)
                 .compact();
+    }
+
+    /**
+     * Returns the {@code type} claim ("access" / "refresh") of a syntactically
+     * valid token, or {@code null} when the token is invalid or the claim is
+     * absent (e.g. legacy tokens issued before the type claim was introduced).
+     */
+    public String getTokenType(String token) {
+        try {
+            return parseToken(token).get("type", String.class);
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
     }
 
     public Long getUserIdFromToken(String token) {

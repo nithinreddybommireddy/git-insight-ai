@@ -2,6 +2,7 @@ package com.gitinsight.githubservice;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.dto.response.ApiResponse;
+import com.gitinsight.common.security.JwtUtil;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.OrganizationAnalyticsResponse;
@@ -194,6 +195,7 @@ class GitHubFlowIntegrationTest {
     private String validToken() {
         return Jwts.builder()
                 .subject("1")
+                .claim("type", JwtUtil.TOKEN_TYPE_ACCESS)
                 .claim("email", "user@example.com")
                 .claim("role", "USER")
                 .issuedAt(new Date())
