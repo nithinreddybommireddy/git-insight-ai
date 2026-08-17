@@ -41,7 +41,11 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         String token = extractToken(request);
 
-        if (token != null && jwtUtil.validateToken(token)) {
+        // Only access tokens authorize API requests. A stolen refresh token must
+        // never double as a bearer token (refresh tokens carry no role claim).
+        if (token != null
+                && jwtUtil.validateToken(token)
+                && JwtUtil.TOKEN_TYPE_ACCESS.equals(jwtUtil.getTokenType(token))) {
             Long userId = jwtUtil.getUserIdFromToken(token);
             String role = jwtUtil.getRoleFromToken(token);
 
@@ -58,6 +62,18 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);
+        }
+        // HttpOnly cookie transport (browser sessions set by auth-service at
+        // login/register/OAuth). The Authorization header remains the primary
+        // channel for API clients and server-to-server calls; the cookie is the
+        // fallback so the browser can authenticate without touching tokens.
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (jakarta.servlet.http.Cookie cookie : cookies) {
+                if (AuthCookieNames.ACCESS.equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
         }
         return null;
     }

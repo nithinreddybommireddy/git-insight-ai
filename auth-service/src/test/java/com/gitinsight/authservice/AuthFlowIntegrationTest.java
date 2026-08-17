@@ -30,6 +30,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.util.UriComponentsBuilder;
 
+import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
@@ -205,6 +206,84 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.role").value("USER"));
     }
 
+    // ── HttpOnly cookie session transport ──
+
+    @Test
+    void loginSetsHttpOnlyCookiesAndCookieAuthenticatesMe() throws Exception {
+        String email = uniqueEmail();
+        register(email, PASSWORD);
+
+        // Login sets both session cookies — HttpOnly, path-scoped, SameSite=Lax.
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        List<String> setCookies = login.getResponse().getHeaders("Set-Cookie");
+        String accessCookie = cookieValue(setCookies, "gitinsight_access_token");
+        String refreshCookie = cookieValue(setCookies, "gitinsight_refresh_token");
+        org.assertj.core.api.Assertions.assertThat(accessCookie).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(refreshCookie).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(setCookies.toString())
+                .contains("HttpOnly")
+                .contains("SameSite=Lax");
+
+        // The HttpOnly access cookie alone authenticates /me — no Authorization header.
+        mockMvc.perform(get("/api/auth/me")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_access_token", accessCookie)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.email").value(email));
+
+        // The refresh cookie alone is rejected as a bearer token (type=refresh).
+        mockMvc.perform(get("/api/auth/me")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_access_token", refreshCookie)))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void logoutClearsSessionCookies() throws Exception {
+        String email = uniqueEmail();
+        register(email, PASSWORD);
+
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        // Logout expires both session cookies (Max-Age=0 → the browser drops them).
+        mockMvc.perform(post("/api/auth/logout"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andExpect(result -> org.assertj.core.api.Assertions.assertThat(
+                        result.getResponse().getHeaders("Set-Cookie").toString())
+                        .contains("Max-Age=0")
+                        .contains("gitinsight_access_token=")
+                        .contains("gitinsight_refresh_token="));
+
+        // Without the session cookies the request is anonymous (the browser has
+        // dropped them; a stateless JWT itself lives until expiry, which is why
+        // logout must clear the client-side cookie).
+        mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void refreshReadsTokenFromCookieWhenBodyIsEmpty() throws Exception {
+        String email = uniqueEmail();
+        JsonNode data = register(email, PASSWORD);
+
+        MvcResult refresh = mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_refresh_token", data.path("refreshToken").asText())))
+                .andExpect(status().isOk())
+                .andReturn();
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(refresh.getResponse().getHeaders("Set-Cookie"), "gitinsight_access_token"))
+                .isNotBlank();
+    }
+
     // ── Refresh ──
 
     @Test
@@ -340,7 +419,7 @@ class AuthFlowIntegrationTest {
     // ── Full OAuth round trip (GitHub's token + user endpoints stubbed) ──
 
     @Test
-    void githubOAuthFullFlowExchangesCodeUpsertsUserAndRedirectsWithTokens() throws Exception {
+    void githubOAuthFullFlowSetsHttpOnlyCookiesAndRedirectsWithoutTokens() throws Exception {
         // GitHub: exchange the one-time code for an access token.
         StubGitHubConfig.github.expect(requestTo("https://github.com/login/oauth/access_token"))
                 .andExpect(method(HttpMethod.POST))
@@ -366,8 +445,9 @@ class AuthFlowIntegrationTest {
                 .build().getQueryParams().getFirst("state");
         org.assertj.core.api.Assertions.assertThat(state).isNotBlank();
 
-        // 2. Callback with the valid state: code exchanged, user upserted, browser
-        //    redirected back to the frontend with fresh JWTs.
+        // 2. Callback with the valid state: code exchanged, user upserted, and the
+        //    browser redirected back to the frontend with a CLEAN URL — the JWTs
+        //    ride exclusively in HttpOnly cookies, never in the query string.
         MvcResult callback = mockMvc.perform(get("/api/auth/oauth/github/callback")
                         .param("code", "one-time-code")
                         .param("state", state))
@@ -376,9 +456,26 @@ class AuthFlowIntegrationTest {
         String redirect = callback.getResponse().getHeader("Location");
         org.assertj.core.api.Assertions.assertThat(redirect)
                 .isNotNull()
-                .startsWith("http://localhost:5173/auth/callback?")
-                .contains("token=")
-                .contains("refreshToken=");
+                .isEqualTo("http://localhost:5173/auth/callback");
+        org.assertj.core.api.Assertions.assertThat(redirect)
+                .doesNotContain("token=")
+                .doesNotContain("refreshToken=");
+
+        // Session cookies were set: HttpOnly, SameSite=Lax, path-scoped.
+        List<String> setCookies = callback.getResponse().getHeaders("Set-Cookie");
+        String accessCookie = cookieValue(setCookies, "gitinsight_access_token");
+        String refreshCookie = cookieValue(setCookies, "gitinsight_refresh_token");
+        org.assertj.core.api.Assertions.assertThat(accessCookie).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(refreshCookie).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(setCookies.toString())
+                .contains("HttpOnly")
+                .contains("SameSite=Lax");
+
+        // The cookie authenticates the browser immediately (frontend /me call).
+        mockMvc.perform(get("/api/auth/me")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_access_token", accessCookie)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.githubUsername").value("octocat"));
 
         // 3. The GitHub profile was upserted into the local account store.
         User saved = userRepository.findByGithubId(999L).orElseThrow();
@@ -396,12 +493,11 @@ class AuthFlowIntegrationTest {
 
     /**
      * Open-redirect regression: a caller-supplied {@code redirectUri} must never
-     * become the post-login destination, because the JWT is appended to it. The
-     * entry point ignores the parameter entirely and always stores the configured
-     * frontend URI as the state target.
+     * become the post-login destination. The entry point ignores the parameter
+     * entirely and always stores the configured frontend URI as the state target.
      */
     @Test
-    void githubOAuthNeverRedirectsTokensToCallerSuppliedUrls() throws Exception {
+    void githubOAuthNeverRedirectsToCallerSuppliedUrls() throws Exception {
         // GitHub: exchange + profile (same stub pattern as the full-flow test).
         StubGitHubConfig.github.expect(requestTo("https://github.com/login/oauth/access_token"))
                 .andExpect(method(HttpMethod.POST))
@@ -434,8 +530,18 @@ class AuthFlowIntegrationTest {
         String redirect = callback.getResponse().getHeader("Location");
         org.assertj.core.api.Assertions.assertThat(redirect)
                 .isNotNull()
-                .startsWith("http://localhost:5173/auth/callback?")
-                .doesNotContain("evil.example.com");
+                .isEqualTo("http://localhost:5173/auth/callback")
+                .doesNotContain("evil.example.com")
+                .doesNotContain("token=");
+    }
+
+    private static String cookieValue(List<String> setCookies, String name) {
+        String prefix = name + "=";
+        return setCookies.stream()
+                .filter(c -> c.startsWith(prefix))
+                .findFirst()
+                .map(c -> c.substring(prefix.length(), c.indexOf(';')))
+                .orElse("");
     }
 
     /**

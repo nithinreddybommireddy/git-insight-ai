@@ -3,12 +3,14 @@ import { Link, useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle } from "lucide-react";
+import { authApi } from "@/services/api";
 
 /**
- * Destination of the GitHub OAuth redirect. The backend signs the browser back
- * here with ?token=...&refreshToken=... (or ?error=...). Tokens are stored in
- * localStorage and the page is fully reloaded so AuthProvider re-initializes
- * from the stored session and fetches /me.
+ * Destination of the GitHub OAuth redirect. The backend sets the HttpOnly
+ * session cookies and redirects here with a CLEAN URL — no tokens in the query
+ * string (tokens in URLs leak through history, referrers, and proxy logs).
+ * This page simply confirms the session via /auth/me and routes to the
+ * dashboard; the AuthProvider picks up the same session on reload.
  */
 export function OAuthCallback() {
   const [error, setError] = useState<string | null>(null);
@@ -16,8 +18,6 @@ export function OAuthCallback() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
-    const refreshToken = params.get("refreshToken");
     const errorMsg = params.get("error");
 
     if (errorMsg) {
@@ -25,14 +25,24 @@ export function OAuthCallback() {
       return;
     }
 
-    if (token && refreshToken) {
-      localStorage.setItem("gitinsight-token", token);
-      localStorage.setItem("gitinsight-refresh-token", refreshToken);
-      window.location.assign("/dashboard");
-      return;
-    }
+    let cancelled = false;
+    authApi
+      .me()
+      .then((res) => {
+        if (cancelled) return;
+        if (res.success) {
+          window.location.assign("/dashboard");
+        } else {
+          navigate("/login", { replace: true });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) navigate("/login", { replace: true });
+      });
 
-    navigate("/login", { replace: true });
+    return () => {
+      cancelled = true;
+    };
   }, [navigate]);
 
   return (

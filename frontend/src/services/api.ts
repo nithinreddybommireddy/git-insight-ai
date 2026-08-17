@@ -10,26 +10,77 @@ const api = axios.create({
   headers: {
     "Content-Type": "application/json",
   },
+  // Session tokens ride in HttpOnly cookies (set by login/register/OAuth),
+  // so every request must send them. Nothing is stored in localStorage.
+  withCredentials: true,
 });
 
-// Add JWT interceptor
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem("gitinsight-token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+// Session change pub/sub: the silent-refresh interceptor below tells
+// AuthProvider when a refresh succeeded (new user) or the session died.
+type SessionListener = (user: User | null) => void;
+let sessionListeners: SessionListener[] = [];
+
+export function onSessionChange(listener: SessionListener): () => void {
+  sessionListeners.push(listener);
+  return () => {
+    sessionListeners = sessionListeners.filter((l) => l !== listener);
+  };
+}
+
+function notifySessionChange(user: User | null) {
+  for (const listener of sessionListeners) {
+    listener(user);
   }
-  return config;
-});
+}
+
+// ── Silent access-token refresh (single-flight) ──
+// When any request comes back 401 (expired access token), one refresh call is
+// kicked off and every concurrent 401 waits on the same promise, then retries
+// the original request. If the refresh fails, the session is dropped so the
+// UI can route the user back to /login.
+let refreshPromise: Promise<boolean> | null = null;
+
+async function refreshSession(): Promise<boolean> {
+  try {
+    const { data } = await api.post<ApiResponse<AuthData>>("/auth/refresh", {});
+    if (data.success) {
+      notifySessionChange(data.data.user);
+      return true;
+    }
+  } catch {
+    // fall through — session is gone
+  }
+  notifySessionChange(null);
+  return false;
+}
 
 // Surface a friendly message when the GitHub API is temporarily unavailable
 // (HTTP 429) so pages render guidance instead of a raw status text. End users
 // should never see backend/API details (quota, tokens, rate-limit config).
 api.interceptors.response.use(
   (response) => response,
-  (error) => {
+  async (error) => {
+    // 429: friendly rate-limit copy for the GitHub analysis surface.
     if (error?.response?.status === 429 && error.response.data && typeof error.response.data === "object") {
       error.response.data.message =
         "GitHub is temporarily busy. Please wait a minute and try again.";
+    }
+
+    // 401: try a silent refresh once, then replay the original request.
+    const status = error?.response?.status;
+    const url: string = error?.config?.url ?? "";
+    const isAuthEndpoint =
+      url.includes("/auth/login") || url.includes("/auth/register") ||
+      url.includes("/auth/refresh") || url.includes("/auth/logout");
+    if (status === 401 && !isAuthEndpoint && !(error.config as { _retry?: boolean } | undefined)?._retry) {
+      const config = error.config as { _retry?: boolean };
+      config._retry = true;
+      refreshPromise ??= refreshSession();
+      const ok = await refreshPromise;
+      refreshPromise = null;
+      if (ok) {
+        return api(error.config);
+      }
     }
     return Promise.reject(error);
   }
@@ -193,14 +244,27 @@ export const authApi = {
     return data;
   },
 
-  refresh: async (refreshToken: string): Promise<ApiResponse<AuthData>> => {
-    const { data } = await api.post<ApiResponse<AuthData>>("/auth/refresh", { refreshToken });
+  /**
+   * Refresh via the HttpOnly refresh cookie (browser flow). API clients may
+   * still pass a token explicitly; the backend prefers the cookie.
+   */
+  refresh: async (refreshToken?: string): Promise<ApiResponse<AuthData>> => {
+    const { data } = await api.post<ApiResponse<AuthData>>(
+      "/auth/refresh",
+      refreshToken ? { refreshToken } : {}
+    );
     return data;
   },
 
-  me: async (token?: string): Promise<ApiResponse<User>> => {
-    const headers = token ? { Authorization: `Bearer ${token}` } : {};
-    const { data } = await api.get<ApiResponse<User>>("/auth/me", { headers });
+  /** Current user from the HttpOnly session cookie. */
+  me: async (): Promise<ApiResponse<User>> => {
+    const { data } = await api.get<ApiResponse<User>>("/auth/me");
+    return data;
+  },
+
+  /** Clear the HttpOnly session cookies server-side. */
+  logout: async (): Promise<ApiResponse<void>> => {
+    const { data } = await api.post<ApiResponse<void>>("/auth/logout");
     return data;
   },
 
@@ -386,11 +450,15 @@ export interface GitHubContributor {
 }
 
 export interface ContributionStats {
-  totalCommits: number;
-  totalPRs: number;
-  totalIssues: number;
+  /** PushEvents in the user's recent 100-event feed — NOT total commits. */
+  recentPushEvents: number;
+  /** PRs returned by the latest-30 search — a sample, not a lifetime total. */
+  sampledPullRequests: number;
+  /** Issues returned by the latest-30 search — a sample, not a lifetime total. */
+  sampledIssues: number;
   reposContributedTo: number;
   orgCount: number;
+  samplingNote: string;
 }
 
 export interface RateLimitResource {

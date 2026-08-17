@@ -17,8 +17,10 @@ import java.util.List;
  * send cross-origin requests, so no CORS header is produced.
  *
  * <p>{@code app.cors.allowed-origins} is a comma-separated allowlist
- * (default {@code http://localhost:5173}). The Authorization header is always
- * permitted — this is a JWT API, never cookies.
+ * (default {@code http://localhost:5173}). Credentials are enabled so the
+ * HttpOnly session cookies (set by login/register/OAuth) are sent on
+ * cross-origin XHR; the Authorization header remains supported for API
+ * clients.
  */
 @Configuration
 public class CorsConfig {
@@ -34,7 +36,8 @@ public class CorsConfig {
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(origins);
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "Cookie"));
+        config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
