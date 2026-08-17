@@ -11,6 +11,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
+/**
+ * Score-history persistence with per-owner scoping.
+ *
+ * <p>Every snapshot is attributed to the authenticated user who saved it
+ * ({@code ownerId}). A USER can only read the snapshots they recorded
+ * themselves — one user can never see, pollute, or mine another user's saved
+ * reports. RECRUITERs and ADMINs are privileged: recruiter flows work on
+ * candidate reports, and the admin/stats surfaces see everything (including
+ * pre-ownership rows whose {@code ownerId} is null).
+ */
 @Service
 public class ScoreHistoryService {
 
@@ -22,11 +32,10 @@ public class ScoreHistoryService {
         this.repository = repository;
     }
 
-    /**
-     * Record a score snapshot for a developer.
-     */
-    public ScoreHistory recordScore(DeveloperScoreResponse score) {
+    /** {@code ownerId} is the auth-service user id of the requester (never null for new rows). */
+    public ScoreHistory recordScore(DeveloperScoreResponse score, Long ownerId) {
         ScoreHistory history = new ScoreHistory();
+        history.setOwnerId(ownerId);
         history.setUsername(score.getUsername());
         history.setOverallScore(score.getOverallScore());
         history.setLevel(score.getLevel());
@@ -52,53 +61,53 @@ public class ScoreHistoryService {
         }
 
         ScoreHistory saved = repository.save(history);
-        log.info("Recorded score for {}: {} (total snapshots: {})",
-                score.getUsername(), score.getOverallScore(),
+        log.info("Recorded score for {} (owner {}): {} (total snapshots: {})",
+                score.getUsername(), ownerId, score.getOverallScore(),
                 repository.countByUsername(score.getUsername()));
 
         return saved;
     }
 
     /**
-     * Get score history for a specific developer (most recent first).
+     * Score history for a developer in chronological order (chart rendering).
+     * Regular users only see their own snapshots for this username.
      */
-    public List<ScoreHistory> getHistory(String username) {
-        return repository.findByUsernameOrderByCreatedAtDesc(username);
+    public List<ScoreHistory> getHistoryAscending(String username, Long ownerId, boolean privileged) {
+        return privileged
+                ? repository.findByUsernameOrderByCreatedAtAsc(username)
+                : repository.findByOwnerIdAndUsernameOrderByCreatedAtAsc(ownerId, username);
+    }
+
+    /** Latest recorded score for a developer (scoped like {@link #getHistoryAscending}). */
+    public ScoreHistory getLatest(String username, Long ownerId, boolean privileged) {
+        return privileged
+                ? repository.findTopByUsernameOrderByCreatedAtDesc(username).orElse(null)
+                : repository.findTopByOwnerIdAndUsernameOrderByCreatedAtDesc(ownerId, username).orElse(null);
+    }
+
+    /** All history across developers, scoped: own snapshots for USER, everything for RECRUITER/ADMIN. */
+    public List<ScoreHistory> getAllHistory(Long ownerId, boolean privileged) {
+        return privileged
+                ? repository.findAllByOrderByCreatedAtDesc()
+                : repository.findByOwnerIdOrderByCreatedAtDesc(ownerId);
     }
 
     /**
-     * Get score history in chronological order for chart rendering.
+     * Statistics over the caller's visible snapshots — for a regular user that
+     * is their own saved set, so the numbers shown are truthful and scoped.
      */
-    public List<ScoreHistory> getHistoryAscending(String username) {
-        return repository.findByUsernameOrderByCreatedAtAsc(username);
-    }
+    public Map<String, Object> getStats(Long ownerId, boolean privileged) {
+        List<ScoreHistory> visible = privileged
+                ? repository.findAll()
+                : repository.findByOwnerIdOrderByCreatedAtDesc(ownerId);
 
-    /**
-     * Get the latest score for a developer.
-     */
-    public ScoreHistory getLatest(String username) {
-        return repository.findTopByUsernameOrderByCreatedAtDesc(username).orElse(null);
-    }
-
-    /**
-     * Get history for all developers (most recent first).
-     */
-    public List<ScoreHistory> getAllHistory() {
-        return repository.findAllByOrderByCreatedAtDesc();
-    }
-
-    /**
-     * Get statistics about stored scores.
-     */
-    public Map<String, Object> getStats() {
-        List<ScoreHistory> all = repository.findAll();
-        long totalSnapshots = all.size();
-        long uniqueUsers = all.stream()
+        long totalSnapshots = visible.size();
+        long uniqueUsers = visible.stream()
                 .map(ScoreHistory::getUsername)
                 .distinct()
                 .count();
 
-        double avg = all.stream()
+        double avg = visible.stream()
                 .mapToInt(ScoreHistory::getOverallScore)
                 .average()
                 .orElse(0);

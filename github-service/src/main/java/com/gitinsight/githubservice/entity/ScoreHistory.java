@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "score_history", indexes = {
     @Index(name = "idx_score_username", columnList = "username"),
-    @Index(name = "idx_score_username_created", columnList = "username, created_at")
+    @Index(name = "idx_score_username_created", columnList = "username, created_at"),
+    @Index(name = "idx_score_owner", columnList = "owner_id")
 })
 @Data
 @NoArgsConstructor
@@ -26,6 +27,14 @@ public class ScoreHistory {
 
     @Column(name = "display_name", length = 200)
     private String displayName;
+
+    /**
+     * The auth-service user who saved this snapshot (null for rows recorded
+     * before ownership was introduced). USER-scoped history hides null-owner
+     * rows; RECRUITER/ADMIN see everything.
+     */
+    @Column(name = "owner_id")
+    private Long ownerId;
 
     @Column(nullable = false)
     private int overallScore;

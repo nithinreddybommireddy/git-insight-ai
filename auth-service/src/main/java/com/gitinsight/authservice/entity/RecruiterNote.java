@@ -18,7 +18,9 @@ public class RecruiterNote {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    // EAGER: recruiter is serialized with every note response; with
+    // open-in-view disabled a lazy proxy can't be initialized after flush.
+    @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "recruiter_id", nullable = false)
     private User recruiter;
 

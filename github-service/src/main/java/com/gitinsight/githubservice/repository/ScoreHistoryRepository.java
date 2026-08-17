@@ -19,4 +19,14 @@ public interface ScoreHistoryRepository extends JpaRepository<ScoreHistory, Long
     List<ScoreHistory> findAllByOrderByCreatedAtDesc();
 
     long countByUsername(String username);
+
+    // ── Owner-scoped queries (USER sees only the snapshots they saved) ──
+
+    List<ScoreHistory> findByOwnerIdOrderByCreatedAtDesc(Long ownerId);
+
+    List<ScoreHistory> findByOwnerIdAndUsernameOrderByCreatedAtAsc(Long ownerId, String username);
+
+    Optional<ScoreHistory> findTopByOwnerIdAndUsernameOrderByCreatedAtDesc(Long ownerId, String username);
+
+    long countByOwnerId(Long ownerId);
 }
