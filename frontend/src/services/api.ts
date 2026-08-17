@@ -98,9 +98,12 @@ export interface User {
   createdAt: string;
 }
 
+// Sessions ride exclusively in HttpOnly cookies — the login/register/refresh
+// JSON bodies never contain tokens, so these fields are optional for API
+// clients that might send a token explicitly to /auth/refresh.
 export interface AuthData {
-  token: string;
-  refreshToken: string;
+  token?: string;
+  refreshToken?: string;
   user: User;
 }
 
@@ -823,6 +826,14 @@ export const aiApi = {
 
 // ==================== Score History Types ====================
 
+export interface ScoreHistoryPage {
+  content: ScoreSnapshot[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+}
+
 export interface ScoreSnapshot {
   id: number;
   username: string;
@@ -865,8 +876,9 @@ export const reportsApi = {
     return data;
   },
 
-  getAllHistory: async (): Promise<ApiResponse<ScoreSnapshot[]>> => {
-    const { data } = await api.get<ApiResponse<ScoreSnapshot[]>>(`/reports/all`);
+  /** Paginated (default page 0, 50 per page) — the backend never returns the full table. */
+  getAllHistory: async (page = 0, size = 50): Promise<ApiResponse<ScoreHistoryPage>> => {
+    const { data } = await api.get<ApiResponse<ScoreHistoryPage>>(`/reports/all?page=${page}&size=${size}`);
     return data;
   },
 
@@ -875,6 +887,7 @@ export const reportsApi = {
     return data;
   },
 
+  /** POST (not GET): generating writes a history snapshot; a mutating GET is a CSRF vector. */
   generateReport: async (username: string): Promise<ApiResponse<{
     score: DeveloperScore;
     profile: GitHubProfile;
@@ -882,7 +895,7 @@ export const reportsApi = {
     history: ScoreSnapshot[];
     recorded: ScoreSnapshot;
   }>> => {
-    const { data } = await api.get<ApiResponse<{
+    const { data } = await api.post<ApiResponse<{
       score: DeveloperScore;
       profile: GitHubProfile;
       repos: Repository[];

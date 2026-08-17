@@ -109,8 +109,15 @@ public class AuthController {
                     .body(new ApiResponse<>(false, "Not authenticated", null));
         }
         Long userId = (Long) authentication.getPrincipal();
-        UserResponse user = authService.getMe(userId);
-        return ResponseEntity.ok(new ApiResponse<>(true, "User fetched successfully", user));
+        try {
+            UserResponse user = authService.getMe(userId);
+            return ResponseEntity.ok(new ApiResponse<>(true, "User fetched successfully", user));
+        } catch (RuntimeException e) {
+            // Covers disabled accounts: the session must not keep working after
+            // an admin disables the user, so /me treats it as unauthenticated.
+            return ResponseEntity.status(401)
+                    .body(new ApiResponse<>(false, "Not authenticated", null));
+        }
     }
 
     /**

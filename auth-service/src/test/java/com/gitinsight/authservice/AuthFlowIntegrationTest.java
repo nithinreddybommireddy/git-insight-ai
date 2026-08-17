@@ -55,7 +55,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @ActiveProfiles("test")
 class AuthFlowIntegrationTest {
 
-    private static final String PASSWORD = "sup3r-secret";
+    private static final String PASSWORD = "Sup3r-secret";
 
     @Autowired
     private MockMvc mockMvc;
@@ -105,14 +105,24 @@ class AuthFlowIntegrationTest {
         return objectMapper.readTree(result.getResponse().getContentAsString()).path("data");
     }
 
+    /** The HttpOnly access-token cookie set by a successful login. */
     private String loginToken(String email, String password) throws Exception {
         MvcResult result = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        return objectMapper.readTree(result.getResponse().getContentAsString())
-                .path("data").path("token").asText();
+        return cookieValue(result.getResponse().getHeaders("Set-Cookie"), "gitinsight_access_token");
+    }
+
+    /** The HttpOnly refresh-token cookie set by a successful login. */
+    private String loginRefreshToken(String email, String password) throws Exception {
+        MvcResult result = mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"" + password + "\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        return cookieValue(result.getResponse().getHeaders("Set-Cookie"), "gitinsight_refresh_token");
     }
 
     private User createUser(String email, User.Role role) {
@@ -128,15 +138,30 @@ class AuthFlowIntegrationTest {
     // ── Registration ──
 
     @Test
-    void registerReturnsTokensAndPersistsUser() throws Exception {
+    void registerPersistsUserAndDeliversTokensOnlyViaCookies() throws Exception {
         String email = uniqueEmail();
-        JsonNode data = register(email, PASSWORD);
+        MvcResult result = mockMvc.perform(post("/api/auth/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"name\":\"Alice Dev\",\"email\":\"" + email
+                                + "\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.success").value(true))
+                .andReturn();
 
-        org.assertj.core.api.Assertions.assertThat(data.path("token").asText()).isNotBlank();
-        org.assertj.core.api.Assertions.assertThat(data.path("refreshToken").asText()).isNotBlank();
+        JsonNode data = objectMapper.readTree(result.getResponse().getContentAsString()).path("data");
+        // Tokens are HttpOnly-cookie-only: the JSON body must never expose them
+        // (any page JS could otherwise read them).
+        org.assertj.core.api.Assertions.assertThat(data.path("token").isMissingNode()).isTrue();
+        org.assertj.core.api.Assertions.assertThat(data.path("refreshToken").isMissingNode()).isTrue();
         org.assertj.core.api.Assertions.assertThat(data.path("user").path("email").asText()).isEqualTo(email);
         org.assertj.core.api.Assertions.assertThat(data.path("user").path("role").asText()).isEqualTo("USER");
         org.assertj.core.api.Assertions.assertThat(userRepository.findByEmail(email)).isPresent();
+
+        List<String> setCookies = result.getResponse().getHeaders("Set-Cookie");
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_access_token")).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_refresh_token")).isNotBlank();
     }
 
     @Test
@@ -167,14 +192,20 @@ class AuthFlowIntegrationTest {
         String email = uniqueEmail();
         register(email, PASSWORD);
 
-        mockMvc.perform(post("/api/auth/login")
+        MvcResult login = mockMvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.token").isNotEmpty())
-                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.user.email").value(email));
+                .andExpect(jsonPath("$.data.user.email").value(email))
+                .andExpect(jsonPath("$.data.token").doesNotExist())
+                .andExpect(jsonPath("$.data.refreshToken").doesNotExist())
+                .andReturn();
+        List<String> setCookies = login.getResponse().getHeaders("Set-Cookie");
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_access_token")).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_refresh_token")).isNotBlank();
     }
 
     @Test
@@ -271,12 +302,13 @@ class AuthFlowIntegrationTest {
     @Test
     void refreshReadsTokenFromCookieWhenBodyIsEmpty() throws Exception {
         String email = uniqueEmail();
-        JsonNode data = register(email, PASSWORD);
+        register(email, PASSWORD);
+        String refreshToken = loginRefreshToken(email, PASSWORD);
 
         MvcResult refresh = mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{}")
-                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_refresh_token", data.path("refreshToken").asText())))
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_refresh_token", refreshToken)))
                 .andExpect(status().isOk())
                 .andReturn();
         org.assertj.core.api.Assertions.assertThat(
@@ -287,19 +319,24 @@ class AuthFlowIntegrationTest {
     // ── Refresh ──
 
     @Test
-    void refreshExchangesRefreshTokenForNewTokens() throws Exception {
+    void refreshExchangesRefreshTokenForNewCookies() throws Exception {
         String email = uniqueEmail();
-        JsonNode data = register(email, PASSWORD);
-        String refreshToken = data.path("refreshToken").asText();
+        register(email, PASSWORD);
+        String refreshToken = loginRefreshToken(email, PASSWORD);
 
-        mockMvc.perform(post("/api/auth/refresh")
+        MvcResult refresh = mockMvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
-                .andExpect(jsonPath("$.data.token").isNotEmpty())
-                .andExpect(jsonPath("$.data.refreshToken").isNotEmpty())
-                .andExpect(jsonPath("$.data.user.email").value(email));
+                .andExpect(jsonPath("$.data.token").doesNotExist())
+                .andExpect(jsonPath("$.data.user.email").value(email))
+                .andReturn();
+        List<String> setCookies = refresh.getResponse().getHeaders("Set-Cookie");
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_access_token")).isNotBlank();
+        org.assertj.core.api.Assertions.assertThat(
+                cookieValue(setCookies, "gitinsight_refresh_token")).isNotBlank();
     }
 
     @Test
@@ -309,6 +346,44 @@ class AuthFlowIntegrationTest {
                         .content("{\"refreshToken\":\"not-a-real-token\"}"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.success").value(false));
+    }
+
+    // ── Disabled-account lifecycle ──
+
+    @Test
+    void disabledUserCannotRefreshOrUseSession() throws Exception {
+        String email = uniqueEmail();
+        register(email, PASSWORD);
+        String accessToken = loginToken(email, PASSWORD);
+        String refreshToken = loginRefreshToken(email, PASSWORD);
+
+        // Sanity: the fresh session works.
+        mockMvc.perform(get("/api/auth/me")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_access_token", accessToken)))
+                .andExpect(status().isOk());
+
+        // Admin disables the account: login is rejected…
+        userRepository.findByEmail(email).ifPresent(u -> {
+            u.setEnabled(false);
+            userRepository.save(u);
+        });
+
+        mockMvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"" + PASSWORD + "\"}"))
+                .andExpect(status().isUnauthorized());
+
+        // …the refresh token can no longer mint a new session…
+        mockMvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.success").value(false));
+
+        // …and /me treats the still-valid access cookie as unauthenticated.
+        mockMvc.perform(get("/api/auth/me")
+                        .cookie(new jakarta.servlet.http.Cookie("gitinsight_access_token", accessToken)))
+                .andExpect(status().isUnauthorized());
     }
 
     // ── Role authorization ──

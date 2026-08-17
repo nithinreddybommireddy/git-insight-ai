@@ -16,12 +16,11 @@ import java.util.List;
  * increments atomically and sets the expiry on first use, so budgets are shared
  * across github-service instances.
  *
- * <p>Availability policy: if Redis is unreachable the limiter returns
- * {@code 0} ("no usage recorded") so the AI surface stays usable and the
- * outage is loud in the logs. AI spend protection is best-effort here — a
- * production gateway should also apply network-level rate limiting. This
- * mirrors the auth-service limiter's fail-open policy so a Redis blip never
- * becomes a self-inflicted outage.
+ * <p>Availability policy: {@link #tryIncrement} returns {@code null} when
+ * Redis is unreachable so callers can fall back to a local in-memory limiter
+ * instead of silently allowing unlimited traffic. Gemini spend protection must
+ * never fail open — {@code increment} (used by callers without a fallback)
+ * keeps the historical {@code 0} behavior for availability-sensitive paths.
  */
 @Component
 public class RedisRateLimiter {
@@ -44,13 +43,22 @@ public class RedisRateLimiter {
 
     /** Returns the request count in the current window for {@code key} (1 = first request). */
     public long increment(String key) {
+        Long count = tryIncrement(key);
+        return count == null ? 0L : count;
+    }
+
+    /**
+     * Like {@link #increment} but reports Redis failure as {@code null} so the
+     * caller can enforce a local fallback budget instead of failing open.
+     */
+    public Long tryIncrement(String key) {
         try {
             Long count = redisTemplate.execute(
                     INCR_WINDOW, List.of(KEY_PREFIX + key), String.valueOf(WINDOW_SECONDS));
-            return count == null ? 0L : count;
+            return count;
         } catch (Exception e) {
-            log.error("Redis rate limiter unavailable — allowing request (fail open): {}", e.getMessage());
-            return 0L;
+            log.error("Redis rate limiter unavailable — caller must enforce a local fallback: {}", e.getMessage());
+            return null;
         }
     }
 }

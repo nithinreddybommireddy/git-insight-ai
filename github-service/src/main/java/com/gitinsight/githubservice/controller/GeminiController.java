@@ -15,6 +15,7 @@ import com.gitinsight.githubservice.service.DeveloperScoreService;
 import com.gitinsight.githubservice.service.GeminiService;
 import com.gitinsight.githubservice.service.GitHubService;
 import com.gitinsight.githubservice.service.OrganizationAnalyticsService;
+import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -170,7 +171,7 @@ public class GeminiController {
      * Body: {@code {username, commits: [{sha, message, repoName, files: [{filename, status, additions, deletions, patch}]}]}}
      */
     @PostMapping("/commit-diff-review")
-    public ApiResponse<CommitDiffReviewResponse> getCommitDiffReview(@RequestBody CommitDiffReviewRequest request) {
+    public ApiResponse<CommitDiffReviewResponse> getCommitDiffReview(@Valid @RequestBody CommitDiffReviewRequest request) {
         CommitDiffReviewResponse review = geminiService.generateCommitDiffReview(request);
         return new ApiResponse<>(true, "AI commit-diff review generated", review);
     }
@@ -180,7 +181,7 @@ public class GeminiController {
      * Called by auth-service's recruiter flow with the deterministic match data.
      */
     @PostMapping("/job-match")
-    public ApiResponse<JobMatchAiResponse> getJobMatch(@RequestBody JobMatchRequest request) {
+    public ApiResponse<JobMatchAiResponse> getJobMatch(@Valid @RequestBody JobMatchRequest request) {
         JobMatchAiResponse result = geminiService.generateJobMatchExplanations(request);
         return new ApiResponse<>(true, "AI job-match explanations generated", result);
     }

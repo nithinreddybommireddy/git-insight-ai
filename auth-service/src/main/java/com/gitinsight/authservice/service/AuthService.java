@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClient;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -39,12 +40,13 @@ public class AuthService {
     }
 
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
+        String email = normalizeEmail(request.getEmail());
+        if (userRepository.existsByEmail(email)) {
             throw new RuntimeException("Email already registered");
         }
 
         User user = new User();
-        user.setEmail(request.getEmail());
+        user.setEmail(email);
         user.setPassword(passwordEncoder.encode(request.getPassword()));
         user.setName(request.getName());
         user.setRole(User.Role.USER);
@@ -58,7 +60,7 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.getEmail())
+        User user = userRepository.findByEmail(normalizeEmail(request.getEmail()))
                 .orElseThrow(() -> new RuntimeException("Invalid email or password"));
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
@@ -83,12 +85,22 @@ public class AuthService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
 
+        // A disabled account must not be able to mint a fresh session: an admin
+        // disabling a user has to take effect immediately, not after the current
+        // refresh token naturally expires.
+        if (!user.isEnabled()) {
+            throw new RuntimeException("Account is disabled");
+        }
+
         return buildAuthResponse(user);
     }
 
     public UserResponse getMe(Long userId) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new RuntimeException("User not found"));
+        if (!user.isEnabled()) {
+            throw new RuntimeException("Account is disabled");
+        }
         return mapToUserResponse(user);
     }
 
@@ -146,9 +158,11 @@ public class AuthService {
 
     private User upsertGithubUser(GitHubUserResponse githubUser) {
         Optional<User> byGithubId = userRepository.findByGithubId(githubUser.id());
-        Optional<User> byEmail = (githubUser.email() == null || githubUser.email().isBlank())
+        String githubEmail = githubUser.email() == null ? null
+                : normalizeEmail(githubUser.email());
+        Optional<User> byEmail = (githubEmail == null || githubEmail.isBlank())
                 ? Optional.empty()
-                : userRepository.findByEmail(githubUser.email());
+                : userRepository.findByEmail(githubEmail);
 
         User user = byGithubId.or(() -> byEmail).orElse(null);
         boolean isNew = user == null;
@@ -163,8 +177,8 @@ public class AuthService {
         user.setGithubId(githubUser.id());
         user.setGithubUsername(githubUser.login());
         if (isNew) {
-            user.setEmail(githubUser.email() != null && !githubUser.email().isBlank()
-                    ? githubUser.email()
+            user.setEmail(githubEmail != null && !githubEmail.isBlank()
+                    ? githubEmail
                     : githubUser.login() + "@users.noreply.github.com");
             user.setName(githubUser.name() != null && !githubUser.name().isBlank()
                     ? githubUser.name()
@@ -179,6 +193,11 @@ public class AuthService {
 
     private static String urlEncode(String value) {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    }
+
+    /** Emails are stored/compared lowercase so one logical address cannot create two accounts. */
+    private static String normalizeEmail(String email) {
+        return email == null ? null : email.trim().toLowerCase(Locale.ROOT);
     }
 
     /** GitHub access-token exchange response (snake_case mapped directly). */

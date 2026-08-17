@@ -9,6 +9,10 @@ import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubService;
 import com.gitinsight.githubservice.service.ScoreHistoryService;
 import com.gitinsight.githubservice.service.ScoringEngine;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.web.bind.annotation.*;
@@ -94,12 +98,19 @@ public class ReportsController {
     }
 
     /**
-     * Get recorded history across developers: own snapshots for USER, all for RECRUITER/ADMIN.
+     * Get recorded history across developers, paginated: own snapshots for USER,
+     * all for RECRUITER/ADMIN. Page size is capped so a huge report table can
+     * never be loaded into memory in one response.
      */
     @GetMapping("/all")
-    public ApiResponse<List<ScoreHistory>> getAllHistory(Authentication authentication) {
+    public ApiResponse<Page<ScoreHistory>> getAllHistory(
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size,
+            Authentication authentication) {
         ReportScope s = scope(authentication);
-        List<ScoreHistory> all = scoreHistoryService.getAllHistory(s.ownerId(), s.privileged());
+        Pageable pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+        Page<ScoreHistory> all = scoreHistoryService.getAllHistory(s.ownerId(), s.privileged(), pageable);
         return new ApiResponse<>(true, "Score history", all);
     }
 
@@ -115,8 +126,15 @@ public class ReportsController {
 
     /**
      * Generate and record a score, returning full developer report data.
+     *
+     * <p>POST (not GET): this endpoint writes a history snapshot, and a GET that
+     * mutates state is both a REST violation and a CSRF vector — browsers send
+     * SameSite=Lax cookies on top-level cross-site GET navigation, so an
+     * attacker could trick a logged-in victim into triggering writes via
+     * {@code <img src=".../generate/...">}. SameSite=Lax does not attach cookies
+     * to cross-site POSTs, so POST + Lax closes that vector.
      */
-    @GetMapping("/generate/{username}")
+    @PostMapping("/generate/{username}")
     public ApiResponse<Map<String, Object>> generateReport(@PathVariable String username,
                                                            Authentication authentication) {
         ReportScope s = scope(authentication);

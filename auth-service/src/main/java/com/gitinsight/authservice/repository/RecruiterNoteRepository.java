@@ -12,5 +12,7 @@ public interface RecruiterNoteRepository extends JpaRepository<RecruiterNote, Lo
 
     List<RecruiterNote> findByRecruiterOrderByCreatedAtDesc(User recruiter);
 
+    long countByRecruiter(User recruiter);
+
     void deleteByRecruiterAndCandidateUsername(User recruiter, String candidateUsername);
 }

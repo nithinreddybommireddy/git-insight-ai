@@ -20,8 +20,9 @@ import java.io.IOException;
  * money, so unlike the GitHub analysis surface these get a per-client budget
  * (default 30 requests/minute, {@code AI_RATE_LIMIT_PER_MINUTE}). The trivial
  * {@code /api/ai/status} health check is exempt. Budgets are Redis-backed
- * (shared across instances); when Redis is down the limiter fails open so the
- * feature keeps working (see {@link RedisRateLimiter}).
+ * (shared across instances); when Redis is down the filter falls back to a
+ * per-instance in-memory limiter ({@link InMemoryRateLimiter}) so spend
+ * protection NEVER fails open.
  *
  * <p>The client key is the real client IP — {@link ClientAddress} only honors
  * {@code X-Forwarded-For} when the direct peer is a proxy this project deploys
@@ -32,15 +33,18 @@ public class AiRateLimitFilter extends OncePerRequestFilter {
 
     private final int maxRequestsPerWindow;
     private final ObjectMapper objectMapper;
-    private final RedisRateLimiter rateLimiter;
+    private final RedisRateLimiter redisRateLimiter;
+    private final InMemoryRateLimiter inMemoryRateLimiter;
 
     public AiRateLimitFilter(
             @Value("${app.security.ai-rate-limit-per-minute:30}") int maxRequestsPerWindow,
             ObjectMapper objectMapper,
-            RedisRateLimiter rateLimiter) {
+            RedisRateLimiter redisRateLimiter,
+            InMemoryRateLimiter inMemoryRateLimiter) {
         this.maxRequestsPerWindow = maxRequestsPerWindow;
         this.objectMapper = objectMapper;
-        this.rateLimiter = rateLimiter;
+        this.redisRateLimiter = redisRateLimiter;
+        this.inMemoryRateLimiter = inMemoryRateLimiter;
     }
 
     @Override
@@ -53,9 +57,11 @@ public class AiRateLimitFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String client = ClientAddress.resolve(request);
-        long count = rateLimiter.increment("ai:" + client + ":" + request.getRequestURI());
+        String key = "ai:" + client + ":" + request.getRequestURI();
+        Long count = redisRateLimiter.tryIncrement(key);
+        long current = count != null ? count : inMemoryRateLimiter.increment(key);
 
-        if (count > maxRequestsPerWindow) {
+        if (current > maxRequestsPerWindow) {
             response.setStatus(429);
             response.setContentType("application/json");
             response.setCharacterEncoding("UTF-8");

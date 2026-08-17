@@ -9,6 +9,8 @@ import com.gitinsight.authservice.repository.SavedCandidateRepository;
 import com.gitinsight.authservice.repository.UserRepository;
 import com.gitinsight.authservice.service.JobMatcherService;
 import com.gitinsight.common.dto.response.ApiResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -24,6 +26,8 @@ import java.util.Map;
 @RequestMapping("/api/recruiter")
 @PreAuthorize("hasAnyRole('RECRUITER', 'ADMIN')")
 public class RecruiterController {
+
+    private static final Logger log = LoggerFactory.getLogger(RecruiterController.class);
 
     private static final long MAX_JOB_DESCRIPTION_BYTES = 5L * 1024 * 1024; // 5 MB
 
@@ -109,10 +113,15 @@ public class RecruiterController {
             return ResponseEntity.ok(new ApiResponse<>(true,
                     "Job match completed for " + response.processed() + " candidates.", response));
         } catch (IllegalArgumentException ex) {
+            // Input problems (bad file type, unreadable PDF) are safe to echo back.
+            log.warn("Job match rejected: {}", ex.getMessage());
             return badRequest(ex.getMessage());
         } catch (Exception ex) {
+            // Never leak internal exception text (stack details, service URLs,
+            // DB errors) to the client — log it server-side and return generic copy.
+            log.error("Job match failed", ex);
             return ResponseEntity.internalServerError().body(new ApiResponse<>(false,
-                    "Job match failed: " + ex.getMessage(), null));
+                    "Job match could not be completed. Please try again.", null));
         }
     }
 
@@ -129,6 +138,10 @@ public class RecruiterController {
 
         User recruiter = getRecruiter(auth);
         String username = (String) body.get("username");
+        if (username == null || username.isBlank() || username.length() > 39) {
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, "A valid GitHub username is required.", null));
+        }
 
         if (savedCandidateRepository.existsByRecruiterAndCandidateUsername(recruiter, username)) {
             return ResponseEntity.ok(new ApiResponse<>(true, "Candidate already saved", null));
@@ -204,11 +217,22 @@ public class RecruiterController {
             @RequestBody Map<String, String> body) {
 
         User recruiter = getRecruiter(auth);
+        String content = body.get("content");
+        String title = body.get("title");
+        if (content == null || content.isBlank() || content.length() > 5000) {
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, "Note content is required (max 5000 characters).", null));
+        }
+        if (title != null && title.length() > 200) {
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, "Note title must be under 200 characters.", null));
+        }
+
         RecruiterNote note = new RecruiterNote();
         note.setRecruiter(recruiter);
         note.setCandidateUsername(username);
-        note.setTitle(body.get("title"));
-        note.setContent(body.get("content"));
+        note.setTitle(title);
+        note.setContent(content);
 
         RecruiterNote saved = recruiterNoteRepository.save(note);
         return ResponseEntity.ok(new ApiResponse<>(true, "Note added", saved));
@@ -247,7 +271,7 @@ public class RecruiterController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> getStats(Authentication auth) {
         User recruiter = getRecruiter(auth);
         long savedCount = savedCandidateRepository.countByRecruiter(recruiter);
-        long notedCount = recruiterNoteRepository.findByRecruiterOrderByCreatedAtDesc(recruiter).size();
+        long notedCount = recruiterNoteRepository.countByRecruiter(recruiter);
         return ResponseEntity.ok(new ApiResponse<>(true, "Stats fetched",
                 Map.of("savedCandidates", savedCount, "totalNotes", notedCount)));
     }

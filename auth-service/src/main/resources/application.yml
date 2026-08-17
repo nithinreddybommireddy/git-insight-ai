@@ -55,6 +55,10 @@ app:
   security:
     # Per-IP brute-force guard for /api/auth/login and /api/auth/register (in-memory, per instance).
     auth-rate-limit-per-minute: 20
+  internal-api-key: ${INTERNAL_API_KEY:}
+  # Server-to-server credential used when calling github-service's internal AI
+  # endpoints (/api/ai/job-match). Must match INTERNAL_API_KEY on github-service.
+  # When unset, recruiter AI explanations are skipped (deterministic only).
   auth:
     # HttpOnly session cookies: Secure flag is required behind HTTPS (production).
     # Local dev runs over http://localhost, so it defaults to false.
@@ -63,7 +67,10 @@ app:
     # No fallback: the app must NOT boot with a known/committed signing key.
     # Provide JWT_SECRET in the environment (32+ random bytes).
     secret: ${JWT_SECRET}
-    expiration-ms: ${JWT_EXPIRATION_MS:86400000}
+    # Access tokens are intentionally short-lived (15 min): the role is embedded
+    # in the token, so a role change (or disable) must take effect quickly. The
+    # frontend silently refreshes on 401, so users don't notice the shorter TTL.
+    expiration-ms: ${JWT_EXPIRATION_MS:900000}
     refresh-expiration-ms: ${JWT_REFRESH_EXPIRATION_MS:2592000000}
     # Minimum signing-key length in bytes. Raise to 64 in production
     # (JWT_MIN_SECRET_BYTES=64) so deployments cannot ship a 32-byte key.

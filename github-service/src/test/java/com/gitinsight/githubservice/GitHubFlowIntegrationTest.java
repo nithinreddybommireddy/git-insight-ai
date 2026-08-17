@@ -364,7 +364,9 @@ class GitHubFlowIntegrationTest {
                 .andExpect(jsonPath("$.data", org.hamcrest.Matchers.hasSize(1)))
                 .andExpect(jsonPath("$.data[0].username").value("report-dev"));
 
-        mockMvc.perform(get("/api/reports/generate/report-dev")
+        // generate is a POST: it writes a history snapshot, and a mutating GET
+        // would be a CSRF vector under SameSite=Lax cookies.
+        mockMvc.perform(post("/api/reports/generate/report-dev")
                         .header("Authorization", "Bearer " + validToken()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))

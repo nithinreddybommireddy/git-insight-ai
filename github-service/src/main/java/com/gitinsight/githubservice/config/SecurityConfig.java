@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.dto.response.ApiResponse;
 import com.gitinsight.common.security.JwtAuthFilter;
 import com.gitinsight.githubservice.security.AiRateLimitFilter;
+import com.gitinsight.githubservice.security.GitHubRateLimitFilter;
+import com.gitinsight.githubservice.security.InternalApiKeyFilter;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,10 +28,13 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
  * aggregates, so they require a valid auth-service JWT and are scoped per
  * role (own reports for USER, all for RECRUITER/ADMIN).
  *
- * <p>{@code /api/ai/job-match} stays public by design: it is an internal
- * server-to-server endpoint called by auth-service's recruiter flow, which has
- * already enforced RECRUITER/ADMIN authorization before reaching it (it is
- * still covered by the AI rate limiter).
+ * <p>{@code /api/ai/job-match} is NOT public: it is an internal
+ * server-to-server endpoint called by auth-service's recruiter flow (which has
+ * already enforced RECRUITER/ADMIN authorization), and it is additionally
+ * gated by {@link InternalApiKeyFilter} so the internet cannot call it
+ * directly. The GitHub analysis surface ({@code /api/github/**}) is public but
+ * rate-limited per client IP with tiered budgets via
+ * {@link GitHubRateLimitFilter}.
  */
 @Configuration
 @EnableWebSecurity
@@ -38,13 +43,19 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final AiRateLimitFilter aiRateLimitFilter;
+    private final GitHubRateLimitFilter gitHubRateLimitFilter;
+    private final InternalApiKeyFilter internalApiKeyFilter;
     private final ObjectMapper objectMapper;
 
     public SecurityConfig(JwtAuthFilter jwtAuthFilter,
                           AiRateLimitFilter aiRateLimitFilter,
+                          GitHubRateLimitFilter gitHubRateLimitFilter,
+                          InternalApiKeyFilter internalApiKeyFilter,
                           ObjectMapper objectMapper) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.aiRateLimitFilter = aiRateLimitFilter;
+        this.gitHubRateLimitFilter = gitHubRateLimitFilter;
+        this.internalApiKeyFilter = internalApiKeyFilter;
         this.objectMapper = objectMapper;
     }
 
@@ -66,7 +77,9 @@ public class SecurityConfig {
                         .authenticationEntryPoint((request, response, authException) ->
                                 writeJson(response, HttpServletResponse.SC_UNAUTHORIZED, "Not authenticated"))
                 )
+                .addFilterBefore(gitHubRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(aiRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
+                .addFilterBefore(internalApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

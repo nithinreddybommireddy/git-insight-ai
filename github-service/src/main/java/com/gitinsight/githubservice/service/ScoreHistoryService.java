@@ -5,11 +5,12 @@ import com.gitinsight.githubservice.entity.ScoreHistory;
 import com.gitinsight.githubservice.repository.ScoreHistoryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * Score-history persistence with per-owner scoping.
@@ -85,37 +86,43 @@ public class ScoreHistoryService {
                 : repository.findTopByOwnerIdAndUsernameOrderByCreatedAtDesc(ownerId, username).orElse(null);
     }
 
-    /** All history across developers, scoped: own snapshots for USER, everything for RECRUITER/ADMIN. */
-    public List<ScoreHistory> getAllHistory(Long ownerId, boolean privileged) {
+    /**
+     * All history across developers, paginated: own snapshots for USER,
+     * everything for RECRUITER/ADMIN. Never loads the full table.
+     */
+    public Page<ScoreHistory> getAllHistory(Long ownerId, boolean privileged, Pageable pageable) {
         return privileged
-                ? repository.findAllByOrderByCreatedAtDesc()
-                : repository.findByOwnerIdOrderByCreatedAtDesc(ownerId);
+                ? repository.findAllByOrderByCreatedAtDesc(pageable)
+                : repository.findByOwnerIdOrderByCreatedAtDesc(ownerId, pageable);
     }
 
     /**
-     * Statistics over the caller's visible snapshots — for a regular user that
-     * is their own saved set, so the numbers shown are truthful and scoped.
+     * Statistics over the caller's visible snapshots, computed with SQL
+     * aggregation (COUNT / AVG) so the whole table is never materialized.
      */
     public Map<String, Object> getStats(Long ownerId, boolean privileged) {
-        List<ScoreHistory> visible = privileged
-                ? repository.findAll()
-                : repository.findByOwnerIdOrderByCreatedAtDesc(ownerId);
+        long totalSnapshots;
+        long uniqueUsers;
+        double avg;
 
-        long totalSnapshots = visible.size();
-        long uniqueUsers = visible.stream()
-                .map(ScoreHistory::getUsername)
-                .distinct()
-                .count();
-
-        double avg = visible.stream()
-                .mapToInt(ScoreHistory::getOverallScore)
-                .average()
-                .orElse(0);
+        if (privileged) {
+            totalSnapshots = repository.countAll();
+            uniqueUsers = repository.countDistinctUsernameAll();
+            avg = orZero(repository.averageScoreAll());
+        } else {
+            totalSnapshots = repository.countByOwnerId(ownerId);
+            uniqueUsers = repository.countDistinctUsernameByOwnerId(ownerId);
+            avg = orZero(repository.averageScoreByOwnerId(ownerId));
+        }
 
         return Map.of(
                 "totalSnapshots", totalSnapshots,
                 "uniqueUsers", uniqueUsers,
                 "averageScore", (int) Math.round(avg)
         );
+    }
+
+    private static double orZero(Double value) {
+        return value == null ? 0 : value;
     }
 }

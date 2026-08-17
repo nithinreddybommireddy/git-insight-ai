@@ -57,6 +57,11 @@ public class JobMatcherService {
 
     private static final int MAX_JOB_DESCRIPTION_CHARS = 3500;
 
+    /** PDF uploads are parsed with PDFBox, which warns that untrusted files can
+     *  consume unexpected CPU/memory — cap the page count so a crafted 5 MB PDF
+     *  cannot become a resource-exhaustion vector. */
+    private static final int MAX_PDF_PAGES = 50;
+
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})");
 
     /**
@@ -71,8 +76,9 @@ public class JobMatcherService {
     private final RestClient githubClient;
 
     @Autowired
-    public JobMatcherService(@Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl) {
-        this(buildClient(githubServiceUrl));
+    public JobMatcherService(@Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl,
+                             @Value("${app.internal-api-key:}") String internalApiKey) {
+        this(buildClient(githubServiceUrl, internalApiKey));
     }
 
     /** Package-private constructor for tests. */
@@ -335,18 +341,34 @@ public class JobMatcherService {
         return response.getData();
     }
 
-    private static RestClient buildClient(String baseUrl) {
+    private static RestClient buildClient(String baseUrl, String internalApiKey) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(5_000);
         factory.setReadTimeout(20_000);
-        return RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
+        RestClient.Builder builder = RestClient.builder().baseUrl(baseUrl).requestFactory(factory);
+        // Server-to-server credential for github-service's internal AI endpoints
+        // (/api/ai/job-match). When INTERNAL_API_KEY is unset the header is
+        // omitted and github-service rejects the call — AI explanations degrade
+        // gracefully to the deterministic ranking.
+        if (internalApiKey != null && !internalApiKey.isBlank()) {
+            builder.defaultHeader("X-Internal-Api-Key", internalApiKey);
+        }
+        return builder.build();
     }
 
     private static String extractPdfText(byte[] bytes) {
         try (PDDocument document = PDDocument.load(bytes)) {
+            if (document.getNumberOfPages() > MAX_PDF_PAGES) {
+                throw new IllegalArgumentException(
+                        "PDF job descriptions are limited to " + MAX_PDF_PAGES + " pages.");
+            }
             return new PDFTextStripper().getText(document);
+        } catch (IllegalArgumentException e) {
+            throw e;
         } catch (Exception e) {
-            throw new IllegalArgumentException("Could not read the PDF job description: " + e.getMessage(), e);
+            // Never echo PDFBox internals to the client.
+            throw new IllegalArgumentException(
+                    "Could not read the PDF job description. Please upload a text-based PDF or use a .txt/.md file.", e);
         }
     }
 

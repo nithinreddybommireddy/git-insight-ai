@@ -49,10 +49,16 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Honor REDIS_PASSWORD when set (empty value = no auth, matching local dev);
+    # the services read the same env var. Without this the Spring apps would
+    # try to authenticate while the server requires no password (or vice versa).
+    command: ["sh", "-c", "exec redis-server --requirepass \"$${REDIS_PASSWORD}\""]
     ports:
       - "6379:6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # Works with or without a password: plain PING succeeds when unauthenticated,
+      # and -a authenticates when a password is set.
+      test: ["CMD-SHELL", "redis-cli ping >/dev/null 2>&1 || redis-cli -a \"$$REDIS_PASSWORD\" ping >/dev/null 2>&1"]
       interval: 5s
       timeout: 3s
       retries: 12
@@ -70,8 +76,12 @@ services:
       JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Shared secret that lets auth-service call this service's internal AI
+      # endpoints. Must match on both services (see docker/env.example).
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
       # Shared Redis: GitHub/AI cache + AI rate limiting (degrades to in-memory if down).
       REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "8081:8081"
     depends_on:
@@ -107,7 +117,11 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
       JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
       REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       GITHUB_SERVICE_URL: http://github-service:8081
+      # Shared secret used when calling github-service's internal AI endpoints
+      # (/api/ai/job-match). Must match INTERNAL_API_KEY on github-service.
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8083/api/auth/oauth/github/callback}

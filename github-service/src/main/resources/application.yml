@@ -53,6 +53,11 @@ app:
     # Per-client budget for the AI endpoints (/api/ai/**) — each Gemini call
     # consumes quota/money, so this guards against runaway or abusive traffic.
     ai-rate-limit-per-minute: ${AI_RATE_LIMIT_PER_MINUTE:30}
+    # Shared secret for internal server-to-server endpoints (/api/ai/job-match).
+    # Must match INTERNAL_API_KEY on auth-service. When unset the internal
+    # endpoints are disabled (fail closed) and recruiter AI explanations degrade
+    # to the deterministic ranking.
+    internal-api-key: ${INTERNAL_API_KEY:}
   jwt:
     # Shared signing secret from auth-service. No fallback: a service that
     # protects endpoints with JWTs must not boot with a known/committed key.
