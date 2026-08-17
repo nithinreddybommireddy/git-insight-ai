@@ -15,6 +15,25 @@ const api = axios.create({
   withCredentials: true,
 });
 
+// ── CSRF: Spring Security's CookieCsrfTokenRepository ──
+// The XSRF-TOKEN cookie (non-HttpOnly) is set by the backend on every response.
+// On mutating requests we read it and send it back as X-XSRF-TOKEN so
+// Spring's CsrfFilter can validate the double-submit cookie.
+function readCsrfToken(): string | null {
+  const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
+  return match ? decodeURIComponent(match[1]) : null;
+}
+
+api.interceptors.request.use((config) => {
+  if (config.method && ["post", "put", "patch", "delete"].includes(config.method.toLowerCase())) {
+    const token = readCsrfToken();
+    if (token) {
+      config.headers["X-XSRF-TOKEN"] = token;
+    }
+  }
+  return config;
+});
+
 // Session change pub/sub: the silent-refresh interceptor below tells
 // AuthProvider when a refresh succeeded (new user) or the session died.
 type SessionListener = (user: User | null) => void;

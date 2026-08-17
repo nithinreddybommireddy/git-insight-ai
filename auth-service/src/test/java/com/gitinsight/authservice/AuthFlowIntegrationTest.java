@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.hamcrest.Matchers.hasSize;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -408,6 +409,7 @@ class AuthFlowIntegrationTest {
         // Save a candidate
         mockMvc.perform(post("/api/recruiter/candidates/save")
                         .header("Authorization", "Bearer " + token)
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"username\":\"octocat\",\"name\":\"Octo Cat\",\"score\":87}"))
                 .andExpect(status().isOk())
@@ -426,6 +428,7 @@ class AuthFlowIntegrationTest {
         // Add + list a note
         mockMvc.perform(post("/api/recruiter/candidates/octocat/notes")
                         .header("Authorization", "Bearer " + token)
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"title\":\"Strong backend\",\"content\":\"Good Spring experience.\"}"))
                 .andExpect(status().isOk())
@@ -440,6 +443,7 @@ class AuthFlowIntegrationTest {
         // Toggle bookmark off
         mockMvc.perform(put("/api/recruiter/candidates/octocat/bookmark")
                         .header("Authorization", "Bearer " + token)
+                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"bookmarked\":false}"))
                 .andExpect(status().isOk())
@@ -454,7 +458,8 @@ class AuthFlowIntegrationTest {
 
         // Remove the candidate
         mockMvc.perform(delete("/api/recruiter/candidates/octocat")
-                        .header("Authorization", "Bearer " + token))
+                        .header("Authorization", "Bearer " + token)
+                        .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true));
 

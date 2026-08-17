@@ -26,6 +26,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -352,7 +353,8 @@ class GitHubFlowIntegrationTest {
         stubDeveloper("report-dev");
 
         mockMvc.perform(post("/api/reports/record/report-dev")
-                        .header("Authorization", "Bearer " + validToken()))
+                        .header("Authorization", "Bearer " + validToken())
+                        .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.username").value("report-dev"))
@@ -367,7 +369,8 @@ class GitHubFlowIntegrationTest {
         // generate is a POST: it writes a history snapshot, and a mutating GET
         // would be a CSRF vector under SameSite=Lax cookies.
         mockMvc.perform(post("/api/reports/generate/report-dev")
-                        .header("Authorization", "Bearer " + validToken()))
+                        .header("Authorization", "Bearer " + validToken())
+                        .with(csrf()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.success").value(true))
                 .andExpect(jsonPath("$.data.score.overallScore").isNumber())
