@@ -15,9 +15,12 @@ spring:
       ddl-auto: update
     # SQL logging off by default; enable with SHOW_SQL=true when debugging locally.
     show-sql: ${SHOW_SQL:false}
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+    # Production: don't keep a lazy-load session open during view/serialization.
+    open-in-view: false
+
+  autoconfigure:
+    # JWT-filter auth only — no default in-memory user / generated password.
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
 server:
   port: 8082

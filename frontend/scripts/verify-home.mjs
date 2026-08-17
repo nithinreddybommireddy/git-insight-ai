@@ -76,15 +76,19 @@ try {
   // 3. Layout anomalies
   const layout = await page.evaluate(() => {
     const doc = document.documentElement;
-    const overflowX = doc.scrollWidth > doc.clientWidth + 1;
-    const zeroSections = [...document.querySelectorAll("section")]
-      .filter((s) => s.getBoundingClientRect().height < 5)
-      .length;
-    const imgs = [...document.querySelectorAll("img")];
-    const brokenImgs = imgs.filter((i) => !i.complete || i.naturalWidth === 0).length;
-    return { overflowX, zeroSections, totalSections: document.querySelectorAll("section").length, brokenImgs };
+    return {
+      overflowX: doc.scrollWidth > doc.clientWidth + 1,
+      scrollW: doc.scrollWidth,
+      clientW: doc.clientWidth,
+      zeroSections: [...document.querySelectorAll("section")]
+        .filter((s) => s.getBoundingClientRect().height < 5)
+        .length,
+      imgs: [...document.querySelectorAll("img")],
+      brokenImgs: [...document.querySelectorAll("img")].filter((i) => !i.complete || i.naturalWidth === 0).length,
+      totalSections: document.querySelectorAll("section").length,
+    };
   });
-  check(!layout.overflowX, "No horizontal overflow", `scroll ${docW} vs ${layout.scrollW}`);
+  check(!layout.overflowX, "No horizontal overflow", `${layout.clientW} client vs ${layout.scrollW} scroll`);
   check(layout.zeroSections === 0, "No zero-height sections", `${layout.zeroSections} collapsed`);
   check(layout.brokenImgs === 0, "No broken images", `${layout.brokenImgs} broken`);
 

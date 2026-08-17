@@ -18,14 +18,17 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 | `GITHUB_OAUTH_REDIRECT_URI` | auth-service | `http://localhost:8083/api/auth/oauth/github/callback` | Public callback URL registered in the GitHub OAuth app |
 | `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | `http://localhost:5173/auth/callback` | Where the browser lands after OAuth login (frontend token-consumer route) |
 | `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Base URL auth-service uses to reach github-service |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | auth + github-service | `localhost` / `6379` / *(empty)* | Shared Redis: GitHub/AI cache, AI rate limiting (github-service), login rate limiting + OAuth state (auth-service). Services degrade gracefully when Redis is down |
+| `AI_RATE_LIMIT_PER_MINUTE` | github-service | `30` | Per-client budget for `/api/ai/**` (each call can consume Gemini quota) |
+| `AUTH_COOKIE_SECURE` | auth-service | `false` | Set `true` behind HTTPS so the HttpOnly session cookies get the `Secure` flag |
 | `CORS_ALLOWED_ORIGINS` | auth + github-service | `http://localhost:5173` | Comma-separated frontend origin allowlist — only needed when the frontend is hosted on a different origin than the backend (see `docs/DEPLOYMENT.md`) |
 | `SHOW_SQL` | github + analytics-service | `false` | Set `true` to log Hibernate SQL while debugging |
 | `VITE_API_BASE` | frontend (build-time) | *(empty → same-origin `/api`)* | Backend origin when the frontend is hosted separately from the backend (see `docs/DEPLOYMENT.md`) |
 
 ## Which service reads what
 
-- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`, `CORS_ALLOWED_ORIGINS`, `SHOW_SQL`
-- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`, `CORS_ALLOWED_ORIGINS`
+- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AI_RATE_LIMIT_PER_MINUTE`, `CORS_ALLOWED_ORIGINS`, `SHOW_SQL`
+- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AUTH_COOKIE_SECURE`, `CORS_ALLOWED_ORIGINS`
 - **analytics-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `SHOW_SQL`
 - **frontend** — `VITE_API_BASE` (build-time only; baked into the static bundle)
 
@@ -42,3 +45,11 @@ export GITHUB_CLIENT_SECRET=your-oauth-client-secret
 ```
 
 > ⚠️ Never commit real secrets. The `.env*` files are gitignored; use a private secrets manager or your IDE's env-var fields instead.
+
+## Auth session transport (cookies, not localStorage)
+
+Login/register/refresh and the GitHub OAuth callback set **HttpOnly `SameSite=Lax`
+session cookies** (`gitinsight_access_token`, `gitinsight_refresh_token`); the
+frontend never touches tokens and stores nothing in localStorage. The OAuth
+callback redirects to the frontend with a clean URL — no tokens in query
+strings. Production behind HTTPS must set `AUTH_COOKIE_SECURE=true`.
