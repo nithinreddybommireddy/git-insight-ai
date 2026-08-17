@@ -54,8 +54,15 @@ public class GitHubIntegrationService {
 
     public record GitHubOrg(String login, String avatarUrl, String description) {}
 
-    public record ContributionStats(int totalCommits, int totalPRs, int totalIssues,
-                                     int reposContributedTo, int orgCount) {}
+    /**
+     * Contribution statistics. The "recent/sampled" fields are deliberately
+     * NOT called totals: they count what GitHub's bounded feeds returned
+     * (latest 30 PRs/issues via the search API, PushEvents in the recent
+     * 100-event feed), not a developer's lifetime numbers. {@code samplingNote}
+     * spells that out for API consumers.
+     */
+    public record ContributionStats(int recentPushEvents, int sampledPullRequests, int sampledIssues,
+                                     int reposContributedTo, int orgCount, String samplingNote) {}
 
     public record LanguageBreakdown(String language, double percentage, int repos) {}
 
@@ -91,7 +98,9 @@ public class GitHubIntegrationService {
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
-                .defaultHeader("User-Agent", "GitInsight-AI/1.0");
+                .defaultHeader("User-Agent", "GitInsight-AI/1.0")
+                // Explicit timeouts — never rely on the JDK/OS default.
+                .requestFactory(com.gitinsight.githubservice.config.HttpClients.githubFactory());
 
         if (StringUtils.hasText(githubToken)) {
             builder.defaultHeader("Authorization", "Bearer " + githubToken);
@@ -295,14 +304,17 @@ public class GitHubIntegrationService {
 
     public ContributionStats getContributionStats(String username, List<RepositoryResponse> repos,
                                                    List<GitHubPR> prs, List<GitHubIssue> issues) {
-        int totalCommits = 0;
+        // PushEvents visible in the user's recent 100-event feed. A single
+        // PushEvent can contain many commits, and the feed is bounded — this is
+        // recent push activity, never "total commits".
+        int recentPushEvents = 0;
         try {
             List<Map<String, Object>> events = restClient.get()
                     .uri("/users/{username}/events?per_page=100", username)
                     .retrieve()
                     .body(new ParameterizedTypeReference<List<Map<String, Object>>>() {});
             if (events != null) {
-                totalCommits = (int) events.stream()
+                recentPushEvents = (int) events.stream()
                         .filter(e -> "PushEvent".equals(e.get("type")))
                         .count();
             }
@@ -310,14 +322,17 @@ public class GitHubIntegrationService {
             log.warn("Failed to fetch events for {}: {}", username, e.getMessage());
         }
 
-        int totalPRs = prs != null ? prs.size() : 0;
-        int totalIssues = issues != null ? issues.size() : 0;
+        int sampledPullRequests = prs != null ? prs.size() : 0;
+        int sampledIssues = issues != null ? issues.size() : 0;
         int reposContributed = (int) repos.stream()
                 .filter(r -> !r.isFork())
                 .count();
         int orgs = getOrganizations(username).size();
 
-        return new ContributionStats(totalCommits, totalPRs, totalIssues, reposContributed, orgs);
+        String note = "PRs/issues reflect the latest 30 via the GitHub search API; "
+                + "push events reflect the recent 100-event feed. These are samples, not lifetime totals.";
+        return new ContributionStats(recentPushEvents, sampledPullRequests, sampledIssues,
+                reposContributed, orgs, note);
     }
 
     // ── Language Breakdown ──

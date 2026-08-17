@@ -252,7 +252,7 @@ export function CommitQualityPanel({ analytics, loading, username }: CommitQuali
                 </div>
                 <div>
                   <h3 className="text-sm font-semibold leading-tight">Commit Activity</h3>
-                  <p className="text-[11px] text-muted-foreground">Real commit history across repositories</p>
+                  <p className="text-[11px] text-muted-foreground">Sampled commit history across repositories</p>
                 </div>
               </div>
               {analytics?.totalCommits !== undefined && analytics.totalCommits > 0 && (
@@ -278,7 +278,7 @@ export function CommitQualityPanel({ analytics, loading, username }: CommitQuali
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                   <StatChip
                     icon={GitCommitHorizontal}
-                    label="Total Commits"
+                    label="Commits Sampled"
                     value={analytics.totalCommits.toLocaleString()}
                     accent="from-sky-500 to-blue-500"
                   />

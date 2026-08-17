@@ -61,7 +61,9 @@ public class CommitDiffService {
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
-                .defaultHeader("User-Agent", "GitInsight-AI/1.0");
+                .defaultHeader("User-Agent", "GitInsight-AI/1.0")
+                // Explicit timeouts — never rely on the JDK/OS default.
+                .requestFactory(com.gitinsight.githubservice.config.HttpClients.githubFactory());
 
         if (StringUtils.hasText(githubToken)) {
             builder.defaultHeader("Authorization", "Bearer " + githubToken);

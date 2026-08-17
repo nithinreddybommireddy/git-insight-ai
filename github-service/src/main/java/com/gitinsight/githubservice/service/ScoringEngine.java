@@ -5,6 +5,7 @@ import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse.Develope
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse.MetricScore;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
+import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubCommit;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubContributor;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.LanguageBreakdown;
 import org.slf4j.Logger;
@@ -67,6 +68,26 @@ public class ScoringEngine {
             List<LanguageBreakdown> weightedLanguages,
             List<GitHubContributor> contributors
     ) {
+        return calculate(username, allRepos, profile, weightedLanguages, contributors, null);
+    }
+
+    /**
+     * Full scoring entry point with optional enriched GitHub data.
+     * {@code weightedLanguages} — byte-weighted language breakdown (nullable; falls back to repo-size heuristic).
+     * {@code contributors} — aggregate contributors across the developer's repos (nullable; falls back to fork/issue signals).
+     * {@code recentCommits} — the developer's OWN recent commits (sampled across repos, nullable). When present,
+     * the developer-level metrics (Contribution Recency, Commit Frequency) are computed from these commit dates
+     * instead of repository {@code pushed_at} times, which measure "repo was pushed by anyone" — not "this
+     * developer pushed". Falls back to the repo-based heuristic when commit data is unavailable.
+     */
+    public DeveloperScoreResponse calculate(
+            String username,
+            List<RepositoryResponse> allRepos,
+            GitHubProfileResponse profile,
+            List<LanguageBreakdown> weightedLanguages,
+            List<GitHubContributor> contributors,
+            List<GitHubCommit> recentCommits
+    ) {
         // Filter: ignore forks, archived, empty, templates
         List<RepositoryResponse> effectiveRepos = allRepos.stream()
                 .filter(r -> !r.isFork())
@@ -88,8 +109,11 @@ public class ScoringEngine {
         int repoCount = effectiveRepos.size();
 
         // ── Calculate each metric independently ──
-        MetricScore recency = calcContributionRecency(effectiveRepos, repoCount);
-        MetricScore frequency = calcCommitFrequency(effectiveRepos);
+        // Developer-level metrics use the developer's own commits when available
+        // (recentCommits is the sampled commit history); repo-level metrics use
+        // repository attributes.
+        MetricScore recency = calcContributionRecency(effectiveRepos, repoCount, recentCommits);
+        MetricScore frequency = calcCommitFrequency(effectiveRepos, recentCommits);
         MetricScore health = calcRepositoryHealth(effectiveRepos);
         MetricScore quality = calcRepositoryQuality(effectiveRepos);
         MetricScore consistency = calcContributionConsistency(effectiveRepos, repoCount);
@@ -169,10 +193,46 @@ public class ScoringEngine {
 
     // ═══════════════════════════════════════════════════
     // 1. CONTRIBUTION RECENCY (weight: 15%)
-    // Measures: what % of repos were pushed to recently
+    // Measures: how recently the DEVELOPER last committed (their own commits,
+    // sampled across repos). Repository pushed_at times measure "this repo was
+    // pushed by anyone", which can credit a developer for other people's work,
+    // so developer-level metrics prefer the developer's own commit dates.
     // ═══════════════════════════════════════════════════
 
     MetricScore calcContributionRecency(List<RepositoryResponse> repos, int repoCount) {
+        return calcContributionRecency(repos, repoCount, null);
+    }
+
+    MetricScore calcContributionRecency(List<RepositoryResponse> repos, int repoCount,
+                                        List<GitHubCommit> recentCommits) {
+        Instant lastCommit = latestCommitDate(recentCommits);
+        if (lastCommit != null) {
+            long days = daysSince(lastCommit);
+            int score = days <= 7 ? 100 : days <= 14 ? 90 : days <= 30 ? 75
+                    : days <= 60 ? 55 : days <= 90 ? 35 : days <= 180 ? 20 : 5;
+
+            MetricScore m = new MetricScore();
+            m.setScore(score);
+            m.setWeight(15);
+            m.setLabel("Contribution Recency");
+            m.setDescription("How recently this developer last committed (own commits, sampled)");
+            m.setIcon("activity");
+            m.setTrend(score >= 60 ? "up" : score >= 30 ? "stable" : "down");
+
+            if (score >= 80) {
+                m.setExplanation("This developer committed within the last two weeks — actively shipping code");
+                m.setImprovementSuggestion("Continue the excellent momentum — consistency is key!");
+            } else if (score >= 50) {
+                m.setExplanation("Recent activity, with the latest commit within the last two months");
+                m.setImprovementSuggestion("Keep a steady cadence of commits to strengthen this metric");
+            } else {
+                m.setExplanation("The developer's most recent commit is several months old");
+                m.setImprovementSuggestion("Make a point of committing code at least weekly to show active development");
+            }
+            return m;
+        }
+
+        // Fallback (no commit sample available): what % of repos were pushed recently.
         long active30 = repos.stream().filter(r -> daysSincePush(r) < 30).count();
         long active90 = repos.stream().filter(r -> daysSincePush(r) < 90).count();
 
@@ -185,7 +245,7 @@ public class ScoringEngine {
         m.setScore(Math.min(score, 100));
         m.setWeight(15);
         m.setLabel("Contribution Recency");
-        m.setDescription("How recently this developer has pushed code");
+        m.setDescription("How recently this developer has pushed code (repo recency heuristic)");
         m.setIcon("activity");
         m.setTrend(score >= 60 ? "up" : score >= 30 ? "stable" : "down");
 
@@ -204,10 +264,54 @@ public class ScoringEngine {
 
     // ═══════════════════════════════════════════════════
     // 2. COMMIT FREQUENCY (weight: 15%)
-    // Measures: average days since last push across repos
+    // Measures: commit density from the developer's OWN sampled commit history
+    // (commits in the last 30/90 days). The old "avg days since last repo push"
+    // conflated other people's pushes with this developer's activity.
     // ═══════════════════════════════════════════════════
 
     MetricScore calcCommitFrequency(List<RepositoryResponse> repos) {
+        return calcCommitFrequency(repos, null);
+    }
+
+    MetricScore calcCommitFrequency(List<RepositoryResponse> repos, List<GitHubCommit> recentCommits) {
+        List<Instant> commitDates = commitDates(recentCommits);
+        if (!commitDates.isEmpty()) {
+            Instant now = Instant.now();
+            long c30 = commitDates.stream().filter(d -> daysSince(d) <= 30).count();
+            long c90 = commitDates.stream().filter(d -> daysSince(d) <= 90).count();
+
+            int score;
+            if (c90 == 0) {
+                score = 5; // no commits in the sampled 90-day window
+            } else {
+                // Density: weekly commiters (~4-5/mo) land mid-scale; daily
+                // commiters saturate at 100. The sample caps at 50 commits, so
+                // heavy commiters all saturate — correctly, they are all active.
+                score = (int) Math.round(Math.min(c30 * 10 + c90 * 2, 100));
+            }
+
+            MetricScore m = new MetricScore();
+            m.setScore(score);
+            m.setWeight(15);
+            m.setLabel("Commit Frequency");
+            m.setDescription("Commit density from the developer's own recent commits (sampled)");
+            m.setIcon("git-commit");
+            m.setTrend(score >= 60 ? "up" : score >= 30 ? "stable" : "down");
+
+            if (score >= 80) {
+                m.setExplanation("High commit density — the developer commits regularly and consistently");
+                m.setImprovementSuggestion("Maintain this cadence for the highest score possible");
+            } else if (score >= 40) {
+                m.setExplanation("Moderate commit frequency with steady but not daily activity");
+                m.setImprovementSuggestion("Aim for at least weekly commits to improve this metric");
+            } else {
+                m.setExplanation("Low commit density — few commits in the last 90 days");
+                m.setImprovementSuggestion("Set a goal to contribute to at least one repository per week");
+            }
+            return m;
+        }
+
+        // Fallback (no commit sample available): average days since last repo push.
         double avgDays = repos.stream()
                 .mapToLong(this::daysSincePush)
                 .average()
@@ -226,7 +330,7 @@ public class ScoringEngine {
         m.setScore(score);
         m.setWeight(15);
         m.setLabel("Commit Frequency");
-        m.setDescription("How often this developer pushes code (avg days since last push)");
+        m.setDescription("How often this developer pushes code (avg days since last push, fallback)");
         m.setIcon("git-commit");
         m.setTrend(score >= 60 ? "up" : score >= 30 ? "stable" : "down");
 
@@ -387,7 +491,9 @@ public class ScoringEngine {
                 double p = total > 0 ? lb.percentage() / total : 0;
                 if (p > 0) entropy -= p * (Math.log(p) / Math.log(2));
             }
-            double normalizedEntropy = Math.min(entropy / Math.log(Math.max(languageCount, 2)) / Math.log(2), 1.0);
+            // entropy is already in bits (log2); normalize by log2(languageCount).
+            // The previous form divided by an extra ln(2), inflating the value to 1.0 too easily.
+            double normalizedEntropy = Math.min(entropy / (Math.log(Math.max(languageCount, 2)) / Math.log(2)), 1.0);
 
             int score = (int) Math.round(diversityBonus + normalizedEntropy * 40);
             score = Math.min(score, 100);
@@ -450,7 +556,9 @@ public class ScoringEngine {
             double p = size / total;
             if (p > 0) entropy -= p * (Math.log(p) / Math.log(2));
         }
-        double normalizedEntropy = Math.min(entropy / Math.log(Math.max(languageCount, 2)) / Math.log(2), 1.0);
+        // entropy is already in bits (log2); normalize by log2(languageCount).
+        // The previous form divided by an extra ln(2), inflating the value to 1.0 too easily.
+        double normalizedEntropy = Math.min(entropy / (Math.log(Math.max(languageCount, 2)) / Math.log(2)), 1.0);
 
         int score = (int) Math.round(diversityBonus + normalizedEntropy * 40);
         score = Math.min(score, 100);
@@ -826,6 +934,44 @@ public class ScoringEngine {
                     r.getPushedAt(), r.getFullName(), e);
         }
         return 365;
+    }
+
+    /** Newest commit date across the sampled commit history, or null when none parse. */
+    private Instant latestCommitDate(List<GitHubCommit> recentCommits) {
+        if (recentCommits == null || recentCommits.isEmpty()) {
+            return null;
+        }
+        return recentCommits.stream()
+                .map(this::parseCommitDate)
+                .filter(Objects::nonNull)
+                .max(Instant::compareTo)
+                .orElse(null);
+    }
+
+    /** All parseable commit dates from the sample (empty when no commit data is available). */
+    private List<Instant> commitDates(List<GitHubCommit> recentCommits) {
+        if (recentCommits == null || recentCommits.isEmpty()) {
+            return List.of();
+        }
+        return recentCommits.stream()
+                .map(this::parseCommitDate)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toList());
+    }
+
+    private Instant parseCommitDate(GitHubCommit c) {
+        try {
+            if (c.date() != null && !c.date().isBlank()) {
+                return ZonedDateTime.parse(c.date()).toInstant();
+            }
+        } catch (Exception e) {
+            log.warn("Failed to parse commit date '{}' — skipping", c.date());
+        }
+        return null;
+    }
+
+    private long daysSince(Instant instant) {
+        return Duration.between(instant, Instant.now()).toDays();
     }
 
     String determineLevel(int score) {

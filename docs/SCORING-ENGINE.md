@@ -34,16 +34,11 @@ Only the following repos contribute to scoring (implemented in `ScoringEngine.ca
 ## The 10 Metrics
 
 ### 1. Contribution Recency (15%)
-```
-active30 = repos pushed within last 30 days
-active90 = repos pushed within last 90 days
-score = (active30 / total × 60) + (active90 / total × 40)
-```
+Based on the **developer's own commits** (sampled across repos via
+`GitHubIntegrationService.getRecentCommits`, up to 5 per repo / 50 total).
+Days since the developer's most recent commit → score:
 
-### 2. Commit Frequency (15%)
-Average days since last push → score:
-
-| Avg days | Score |
+| Days since last own commit | Score |
 |----------|-------|
 | ≤ 7  | 100 |
 | ≤ 14 | 90  |
@@ -52,6 +47,25 @@ Average days since last push → score:
 | ≤ 90 | 35  |
 | ≤ 180| 20  |
 | > 180| 5   |
+
+> ℹ️ Repository `pushed_at` measures "this repo was pushed by anyone" — not
+> this developer's activity — so developer-level metrics use the developer's
+> own commit dates. When no commit sample is available (fetch failure), the
+> engine falls back to the legacy repo-push heuristic: `(repos pushed <30d) / total × 60 + (repos pushed <90d) / total × 40`.
+
+### 2. Commit Frequency (15%)
+Commit density from the developer's own sampled commits:
+
+```
+c30 = commits in the last 30 days
+c90 = commits in the last 90 days
+score = min(c30 × 10 + c90 × 2, 100)   (5 when c90 == 0)
+```
+
+Weekly commiters (~4–5/month) land mid-scale; daily commiters saturate at 100.
+The sample caps at 50 commits, so heavy commiters all saturate — correctly,
+they are all active. Falls back to the legacy average-days-since-push table
+when no commit sample is available.
 
 ### 3. Repository Health (15%)
 Per-repo points for: description, license, topics, homepage, size, stars, forks, recent push → averaged.
@@ -109,6 +123,9 @@ Per-repo: recency of push, open-issue count, size, forks → averaged.
 ## Enriched Inputs (upstream of scoring)
 
 Controllers fetch `EnrichedScoreData(weightedLanguages, contributors)` via
-`GitHubIntegrationService.getEnrichedScoreData(repos)` before calling `calculate(...)`.
-Both inputs are **optional** — `ScoringEngine` falls back to heuristics when null/empty,
-so every caller stays deterministic and rate-limit friendly (cached 1 hour).
+`GitHubIntegrationService.getEnrichedScoreData(repos)` and the developer's
+`recentCommits` via `getRecentCommits(username, repos)` before calling
+`calculate(...)`. All inputs are **optional** — `ScoringEngine` falls back to
+heuristics when null/empty, so every caller stays deterministic and
+rate-limit friendly (cached: languages/contributors 1h, commits 10m, full
+score 30m).

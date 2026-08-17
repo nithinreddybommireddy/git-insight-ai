@@ -440,9 +440,9 @@ export function CandidateDetails() {
                     <h3 className="font-semibold">Contribution Activity</h3>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-4">
-                    <ContribStatBox label="Commits" value={contribStats.totalCommits} icon={GitCommit} />
-                    <ContribStatBox label="Pull Requests" value={contribStats.totalPRs} icon={GitPullRequest} />
-                    <ContribStatBox label="Issues" value={contribStats.totalIssues} icon={AlertCircle} />
+                    <ContribStatBox label="Recent pushes" value={contribStats.recentPushEvents} icon={GitCommit} />
+                    <ContribStatBox label="PRs (latest 30)" value={contribStats.sampledPullRequests} icon={GitPullRequest} />
+                    <ContribStatBox label="Issues (latest 30)" value={contribStats.sampledIssues} icon={AlertCircle} />
                     <ContribStatBox label="Repos" value={contribStats.reposContributedTo} icon={BookOpen} />
                     <ContribStatBox label="Organizations" value={contribStats.orgCount} icon={Users} />
                   </div>

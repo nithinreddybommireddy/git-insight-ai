@@ -50,8 +50,12 @@ public class DeveloperScoreService {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
         GitHubProfileResponse profile = gitHubService.getProfile(username);
         GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
+        // The developer's own recent commits drive the developer-level metrics
+        // (recency/frequency) — never another committer's pushes.
+        List<GitHubIntegrationService.GitHubCommit> recentCommits =
+                integrationService.getRecentCommits(username, repos);
         DeveloperScoreResponse score = scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+                enriched.weightedLanguages(), enriched.contributors(), recentCommits);
 
         cacheService.put(cacheKey, score, SCORE_TTL);
         return score;
@@ -66,7 +70,9 @@ public class DeveloperScoreService {
         List<RepositoryResponse> repos = gitHubService.getRepositories(username);
         GitHubProfileResponse profile = gitHubService.getProfile(username);
         GitHubIntegrationService.EnrichedScoreData enriched = integrationService.getEnrichedScoreData(repos);
+        List<GitHubIntegrationService.GitHubCommit> recentCommits =
+                integrationService.getRecentCommits(username, repos);
         return scoringEngine.calculate(username, repos, profile,
-                enriched.weightedLanguages(), enriched.contributors());
+                enriched.weightedLanguages(), enriched.contributors(), recentCommits);
     }
 }

@@ -2,6 +2,7 @@ package com.gitinsight.githubservice.service;
 
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
+import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubCommit;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.GitHubContributor;
 import com.gitinsight.githubservice.service.GitHubIntegrationService.LanguageBreakdown;
 import org.junit.jupiter.api.Test;
@@ -136,6 +137,76 @@ class ScoringEngineTest {
         r.setSize(100);
         // daysSincePush returns 365 for unparseable/missing dates → score 5
         assertEquals(5, engine.calcCommitFrequency(List.of(r)).getScore());
+    }
+
+    // ── Developer-commit metrics (the pushed_at replacement) ──
+
+    private GitHubCommit commitDaysAgo(int days) {
+        return new GitHubCommit("sha-" + days, "feat: work",
+                Instant.now().minusSeconds(days * 86400L).toString(), "owner/repo");
+    }
+
+    @Test
+    void commitFrequencyScoresCommitDensityFromDeveloperCommits() {
+        // Weekly-ish committer: 4 commits in the last 30 days, 6 in the last 90.
+        List<GitHubCommit> weekly = List.of(
+                commitDaysAgo(3), commitDaysAgo(10), commitDaysAgo(17), commitDaysAgo(24),
+                commitDaysAgo(40), commitDaysAgo(55));
+        // c30=4, c90=6 → min(4*10 + 6*2, 100) = 52
+        assertEquals(52, engine.calcCommitFrequency(List.of(), weekly).getScore());
+
+        // Daily committer saturates at 100.
+        List<GitHubCommit> daily = java.util.stream.IntStream.rangeClosed(1, 20)
+                .mapToObj(i -> commitDaysAgo(i))
+                .collect(java.util.stream.Collectors.toList());
+        assertEquals(100, engine.calcCommitFrequency(List.of(), daily).getScore());
+
+        // A single commit 80 days ago is not "frequent": c30=0, c90=1 → 2.
+        assertEquals(2, engine.calcCommitFrequency(List.of(), List.of(commitDaysAgo(80))).getScore());
+
+        // No commits in the 90-day window → 5.
+        assertEquals(5, engine.calcCommitFrequency(List.of(), List.of(commitDaysAgo(200))).getScore());
+    }
+
+    @Test
+    void contributionRecencyUsesDevelopersOwnLastCommit() {
+        // Last commit 3 days ago → 100, even if every repo looks dormant.
+        assertEquals(100, engine.calcContributionRecency(List.of(), 0,
+                List.of(commitDaysAgo(3), commitDaysAgo(40))).getScore());
+        // Last commit 45 days ago → 55.
+        assertEquals(55, engine.calcContributionRecency(List.of(), 0,
+                List.of(commitDaysAgo(45), commitDaysAgo(90))).getScore());
+        // Last commit 300 days ago → 5.
+        assertEquals(5, engine.calcContributionRecency(List.of(), 0,
+                List.of(commitDaysAgo(300))).getScore());
+    }
+
+    @Test
+    void calculatePrefersDeveloperCommitsOverRepoPushedAt() {
+        // Repos look stale (pushed 200 days ago) but the developer committed yesterday —
+        // the developer-level metrics must reflect the developer, not the repos.
+        List<RepositoryResponse> stale = List.of(
+                repo("a", "Java", 0, 0, 0, 100, 200, false, false),
+                repo("b", "Java", 0, 0, 0, 100, 200, false, false));
+        List<GitHubCommit> commits = List.of(commitDaysAgo(1), commitDaysAgo(4), commitDaysAgo(9));
+
+        DeveloperScoreResponse score = engine.calculate("dev", stale, null, null, null, commits);
+
+        // Recency from the developer's own last commit (1 day ago) — not the
+        // repo-push heuristic that would score this profile ~0.
+        assertEquals(100, score.getContributionRecency());
+        // Frequency from commit density: c30=3, c90=3 → min(30+6,100) = 36.
+        assertEquals(36, score.getCommitFrequency());
+    }
+
+    @Test
+    void commitMetricsFallBackToRepoHeuristicsWhenNoCommitData() {
+        List<RepositoryResponse> repos = List.of(repo("a", "Java", 0, 0, 0, 100, 5, false, false));
+        assertEquals(100, engine.calcCommitFrequency(repos).getScore());
+        assertEquals(100, engine.calcContributionRecency(repos, 1).getScore());
+        // Same result when a null/empty commit sample is passed explicitly.
+        assertEquals(100, engine.calcCommitFrequency(repos, null).getScore());
+        assertEquals(100, engine.calcContributionRecency(repos, 1, List.of()).getScore());
     }
 
     @Test

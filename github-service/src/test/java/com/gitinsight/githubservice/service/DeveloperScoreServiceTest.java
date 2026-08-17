@@ -34,7 +34,7 @@ class DeveloperScoreServiceTest {
                 .thenReturn(new GitHubIntegrationService.EnrichedScoreData(List.of(), List.of()));
 
         DeveloperScoreResponse computed = new DeveloperScoreResponse();
-        when(scoringEngine.calculate(anyString(), anyList(), any(), anyList(), anyList()))
+        when(scoringEngine.calculate(anyString(), anyList(), any(), anyList(), anyList(), any()))
                 .thenReturn(computed);
 
         DeveloperScoreService service = new DeveloperScoreService(
@@ -44,7 +44,7 @@ class DeveloperScoreServiceTest {
         DeveloperScoreResponse b = service.getScore("dev");
 
         assertSame(a, b, "second call should return the cached score");
-        verify(scoringEngine, times(1)).calculate(anyString(), anyList(), any(), anyList(), anyList());
+        verify(scoringEngine, times(1)).calculate(anyString(), anyList(), any(), anyList(), anyList(), any());
         verify(gitHubService, times(1)).getRepositories("dev");
         verify(gitHubService, times(1)).getProfile("dev");
     }
@@ -60,7 +60,7 @@ class DeveloperScoreServiceTest {
         when(gitHubService.getProfile(anyString())).thenReturn(new GitHubProfileResponse());
         when(integrationService.getEnrichedScoreData(anyList()))
                 .thenReturn(new GitHubIntegrationService.EnrichedScoreData(List.of(), List.of()));
-        when(scoringEngine.calculate(anyString(), anyList(), any(), anyList(), anyList()))
+        when(scoringEngine.calculate(anyString(), anyList(), any(), anyList(), anyList(), any()))
                 .thenAnswer(inv -> {
                     DeveloperScoreResponse s = new DeveloperScoreResponse();
                     s.setUsername(inv.getArgument(0));
@@ -75,6 +75,6 @@ class DeveloperScoreServiceTest {
 
         assertSame(a, service.getScore("alice"), "alice's score should still be cached");
         assertSame(b, service.getScore("bob"), "bob's score should still be cached");
-        verify(scoringEngine, times(2)).calculate(anyString(), anyList(), any(), anyList(), anyList());
+        verify(scoringEngine, times(2)).calculate(anyString(), anyList(), any(), anyList(), anyList(), any());
     }
 }

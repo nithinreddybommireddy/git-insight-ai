@@ -36,7 +36,9 @@ public class GitHubServiceImpl implements GitHubService {
         RestClient.Builder builder = RestClient.builder()
                 .baseUrl(GITHUB_API_BASE)
                 .defaultHeader("Accept", "application/vnd.github.v3+json")
-                .defaultHeader("User-Agent", "GitInsight-AI/1.0");
+                .defaultHeader("User-Agent", "GitInsight-AI/1.0")
+                // Explicit timeouts — never rely on the JDK/OS default.
+                .requestFactory(com.gitinsight.githubservice.config.HttpClients.githubFactory());
 
         if (StringUtils.hasText(githubToken)) {
             builder.defaultHeader("Authorization", "Bearer " + githubToken);
@@ -90,13 +92,26 @@ public class GitHubServiceImpl implements GitHubService {
         List<RepositoryResponse> cached = cacheService.get(cacheKey);
         if (cached != null) return cached;
 
-        List<GitHubRepoApiResponse> apiRepos;
+        List<GitHubRepoApiResponse> apiRepos = new java.util.ArrayList<>();
 
         try {
-            apiRepos = restClient.get()
-                    .uri("/users/{username}/repos?sort=updated&per_page=100", username)
-                    .retrieve()
-                    .body(new ParameterizedTypeReference<List<GitHubRepoApiResponse>>() {});
+            // Paginate past the first 100 repos so profiles with many
+            // repositories aren't silently scored on a truncated sample.
+            // Cap at 5 pages (500 repos) as an intentional analysis limit.
+            final int maxPages = 5;
+            for (int page = 1; page <= maxPages; page++) {
+                List<GitHubRepoApiResponse> batch = restClient.get()
+                        .uri("/users/{username}/repos?sort=updated&per_page=100&page={page}", username, page)
+                        .retrieve()
+                        .body(new ParameterizedTypeReference<List<GitHubRepoApiResponse>>() {});
+                if (batch == null || batch.isEmpty()) {
+                    break;
+                }
+                apiRepos.addAll(batch);
+                if (batch.size() < 100) {
+                    break;
+                }
+            }
         } catch (HttpClientErrorException.NotFound e) {
             throw new RuntimeException("GitHub user '" + username + "' not found.");
         } catch (HttpClientErrorException.TooManyRequests e) {
