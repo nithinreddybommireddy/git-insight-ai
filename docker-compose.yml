@@ -70,10 +70,14 @@ services:
       JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Shared Redis: GitHub/AI cache + AI rate limiting (degrades to in-memory if down).
+      REDIS_HOST: redis
     ports:
       - "8081:8081"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   analytics-service:

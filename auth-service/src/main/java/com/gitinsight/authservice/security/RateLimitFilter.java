@@ -21,10 +21,14 @@ import java.io.IOException;
  *
  * <p>Budget: {@code app.security.auth-rate-limit-per-minute} requests per client
  * IP per 60-second window (default 20). The client IP honors the first
- * {@code X-Forwarded-For} hop when present (proxied deployments), falling back
- * to the socket address. This is a best-effort guard — a production deployment
- * behind a load balancer should also apply network-level rate limiting at the
- * gateway.
+ * {@code X-Forwarded-For} hop ONLY when the request came through a proxy
+ * (loopback or RFC1918 private peer — i.e. the Vite dev proxy / nginx gateway),
+ * and falls back to the socket address otherwise. This prevents an attacker who
+ * can reach the service directly from spoofing the header to bypass the limiter
+ * (an {@code X-Forwarded-For} header can always be forged; only the direct peer
+ * address is trustworthy). This is still a best-effort guard — a production
+ * deployment behind a load balancer should also apply network-level rate
+ * limiting at the gateway.
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
@@ -66,10 +70,6 @@ public class RateLimitFilter extends OncePerRequestFilter {
     }
 
     private static String clientKey(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        String ip = (forwarded != null && !forwarded.isBlank())
-                ? forwarded.split(",")[0].trim()
-                : request.getRemoteAddr();
-        return ip + "|" + request.getRequestURI();
+        return com.gitinsight.common.web.ClientAddress.resolve(request) + "|" + request.getRequestURI();
     }
 }

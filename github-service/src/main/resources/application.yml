@@ -15,9 +15,22 @@ spring:
       ddl-auto: update
     # SQL logging off by default; enable with SHOW_SQL=true when debugging locally.
     show-sql: ${SHOW_SQL:false}
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
+    # Production: don't keep a lazy-load session open during view/serialization.
+    open-in-view: false
+
+  data:
+    redis:
+      # Shared Redis: GitHub API cache + AI response cache + AI rate limiting.
+      # The service degrades gracefully (in-memory cache, limiter fail-open)
+      # when Redis is unreachable, so a local run without Redis still works.
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 2s
+
+  autoconfigure:
+    # JWT-filter auth only — no default in-memory user / generated password.
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
 server:
   port: 8081
@@ -36,6 +49,10 @@ app:
     # Comma-separated allowlist of frontend origins (only needed when the frontend
     # is hosted on a different origin; same-origin proxies never trigger CORS).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
+  security:
+    # Per-client budget for the AI endpoints (/api/ai/**) — each Gemini call
+    # consumes quota/money, so this guards against runaway or abusive traffic.
+    ai-rate-limit-per-minute: ${AI_RATE_LIMIT_PER_MINUTE:30}
   jwt:
     # Shared signing secret from auth-service. No fallback: a service that
     # protects endpoints with JWTs must not boot with a known/committed key.

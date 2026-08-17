@@ -1,5 +1,7 @@
 package com.gitinsight.githubservice.service;
 
+import com.gitinsight.githubservice.config.HttpClients;
+
 import com.gitinsight.githubservice.dto.request.CommitDiffReviewRequest;
 import com.gitinsight.githubservice.dto.request.JobMatchRequest;
 import com.gitinsight.githubservice.dto.response.CommitAnalyticsResponse;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import org.springframework.web.client.RestClient;
 
+import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -63,16 +66,25 @@ public class GeminiService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    /** How long successful (real) AI responses are cached — cuts Gemini spend on repeat views. */
+    private static final Duration AI_CACHE_TTL = Duration.ofHours(1);
+
     private final RestClient restClient;
     private final String apiKey;
     private final boolean enabled;
+    private final GitHubCacheService cacheService;
 
-    public GeminiService(@Value("${gemini.api.key:}") String apiKey) {
+    public GeminiService(@Value("${gemini.api.key:}") String apiKey,
+                         GitHubCacheService cacheService) {
         this.apiKey = apiKey;
         this.enabled = StringUtils.hasText(apiKey);
+        this.cacheService = cacheService;
 
+        // Explicit timeouts so a hung upstream cannot occupy a Spring worker
+        // thread indefinitely (Gemini generation needs a longer read timeout).
         this.restClient = RestClient.builder()
                 .defaultHeader("Content-Type", "application/json")
+                .requestFactory(HttpClients.timeoutFactory(10, 60))
                 .build();
         if (enabled) {
             log.info("Gemini AI service initialized with API key");
@@ -93,8 +105,8 @@ public class GeminiService {
             GitHubProfileResponse profile,
             List<RepositoryResponse> repos
     ) {
-        String prompt = buildDeveloperSummaryPrompt(username, score, profile, repos);
-        return callGemini(prompt, "Developer Summary");
+        return cachedAi("ai:summary:" + username,
+                () -> callGemini(buildDeveloperSummaryPrompt(username, score, profile, repos), "Developer Summary"));
     }
 
     /**
@@ -105,8 +117,8 @@ public class GeminiService {
             RepositoryResponse repo,
             DeveloperScoreResponse score
     ) {
-        String prompt = buildRepoReviewPrompt(username, repo, score);
-        return callGemini(prompt, "Repository Review");
+        return cachedAi("ai:review:" + username + "/" + repo.getName(),
+                () -> callGemini(buildRepoReviewPrompt(username, repo, score), "Repository Review"));
     }
 
     /**
@@ -117,8 +129,8 @@ public class GeminiService {
             DeveloperScoreResponse score,
             List<RepositoryResponse> repos
     ) {
-        String prompt = buildSkillAnalysisPrompt(username, score, repos);
-        return callGemini(prompt, "Skill Analysis");
+        return cachedAi("ai:skills:" + username,
+                () -> callGemini(buildSkillAnalysisPrompt(username, score, repos), "Skill Analysis"));
     }
 
     /**
@@ -130,8 +142,8 @@ public class GeminiService {
             GitHubProfileResponse profile,
             List<RepositoryResponse> repos
     ) {
-        String prompt = buildCareerRoadmapPrompt(username, score, profile, repos);
-        return callGemini(prompt, "Career Roadmap");
+        return cachedAi("ai:roadmap:" + username,
+                () -> callGemini(buildCareerRoadmapPrompt(username, score, profile, repos), "Career Roadmap"));
     }
 
     /**
@@ -142,8 +154,8 @@ public class GeminiService {
             DeveloperScoreResponse score,
             List<RepositoryResponse> repos
     ) {
-        String prompt = buildInterviewPrompt(username, score, repos);
-        return callGemini(prompt, "Interview Readiness");
+        return cachedAi("ai:interview:" + username,
+                () -> callGemini(buildInterviewPrompt(username, score, repos), "Interview Readiness"));
     }
 
     /**
@@ -153,8 +165,9 @@ public class GeminiService {
             String user1, DeveloperScoreResponse score1, GitHubProfileResponse profile1,
             String user2, DeveloperScoreResponse score2, GitHubProfileResponse profile2
     ) {
-        String prompt = buildComparisonPrompt(user1, score1, profile1, user2, score2, profile2);
-        return callGemini(prompt, "Developer Comparison");
+        return cachedAi("ai:compare:" + user1 + "/" + user2,
+                () -> callGemini(buildComparisonPrompt(user1, score1, profile1, user2, score2, profile2),
+                        "Developer Comparison"));
     }
 
     /**
@@ -166,8 +179,8 @@ public class GeminiService {
             GitHubProfileResponse profile,
             List<RepositoryResponse> repos
     ) {
-        String prompt = buildEnhancedInsightsPrompt(username, score, profile, repos);
-        return callGemini(prompt, "Enhanced Insights");
+        return cachedAi("ai:insights:" + username,
+                () -> callGemini(buildEnhancedInsightsPrompt(username, score, profile, repos), "Enhanced Insights"));
     }
 
     /**
@@ -178,8 +191,8 @@ public class GeminiService {
             CommitAnalyticsResponse commitAnalytics,
             DeveloperScoreResponse score
     ) {
-        String prompt = buildCodeQualityPrompt(username, commitAnalytics, score);
-        return callGemini(prompt, "Code Quality Review");
+        return cachedAi("ai:code-quality:" + username,
+                () -> callGemini(buildCodeQualityPrompt(username, commitAnalytics, score), "Code Quality Review"));
     }
 
     /**
@@ -187,8 +200,8 @@ public class GeminiService {
      * language stack, and contributors with strengths and recommendations.
      */
     public String generateOrganizationReview(String login, OrganizationAnalyticsResponse org) {
-        String prompt = buildOrganizationReviewPrompt(login, org);
-        return callGemini(prompt, "Organization Review");
+        return cachedAi("ai:org:" + login,
+                () -> callGemini(buildOrganizationReviewPrompt(login, org), "Organization Review"));
     }
 
     /**
@@ -248,6 +261,23 @@ public class GeminiService {
     // GEMINI API CALL
     // ═══════════════════════════════════════════════════════════════
 
+    /**
+     * Cache successful real-AI responses per user/topic for an hour so repeat
+     * views (dashboard, reports, compare) never re-invoke Gemini. Fallback and
+     * null results are never cached, so transient failures retry naturally.
+     */
+    private String cachedAi(String key, java.util.function.Supplier<String> supplier) {
+        String cached = cacheService.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        String result = supplier.get();
+        if (result != null && !FALLBACK_UNAVAILABLE.equals(result) && enabled) {
+            cacheService.put(key, result, AI_CACHE_TTL);
+        }
+        return result;
+    }
+
     private String callGemini(String prompt, String taskName) {
         return callGemini(prompt, taskName, MAX_OUTPUT_TOKENS, null);
     }
@@ -265,8 +295,12 @@ public class GeminiService {
         try {
             Map<String, Object> requestBody = buildGeminiRequest(prompt, maxOutputTokens, responseSchema);
 
+            // Send the API key via the x-goog-api-key header (Google's
+            // recommended transport) instead of a query parameter, so the key
+            // never appears in URL logs / proxy access logs / tracing.
             Map<String, Object> response = restClient.post()
-                    .uri(GEMINI_API_URL + "?key=" + apiKey)
+                    .uri(GEMINI_API_URL)
+                    .header("x-goog-api-key", apiKey)
                     .body(requestBody)
                     .retrieve()
                     .body(new ParameterizedTypeReference<Map<String, Object>>() {});
