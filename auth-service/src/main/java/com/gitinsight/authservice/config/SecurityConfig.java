@@ -18,6 +18,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+import com.gitinsight.common.security.CsrfCookieFilter;
 
 @Configuration
 @EnableWebSecurity
@@ -68,7 +69,11 @@ public class SecurityConfig {
                 // only acts on /api/auth/login + /register, so relative order to the
                 // JWT filter is immaterial.
                 .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
+                // Spring Security 6 uses deferred CSRF token loading. Without
+                // this filter the XSRF-TOKEN cookie is never written to
+                // responses, so the SPA cannot read it and send the header.
+                .addFilterAfter(new CsrfCookieFilter(), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
