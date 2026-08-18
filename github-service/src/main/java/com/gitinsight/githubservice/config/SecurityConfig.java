@@ -20,23 +20,15 @@ import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
 /**
- * github-service security.
+ * Security configuration for github-service.
  *
- * <p>Public analysis is intentional (anyone can look up a GitHub developer),
- * so the GitHub + AI surfaces stay open. The AI endpoints are additionally
- * protected by the per-client Redis rate limiter ({@link AiRateLimitFilter}) —
- * every call can consume Gemini quota, so public access is fine but unbounded
- * access is not. The report endpoints persist score history and expose
- * aggregates, so they require a valid auth-service JWT and are scoped per
- * role (own reports for USER, all for RECRUITER/ADMIN).
+ * Public GitHub analysis endpoints remain accessible without authentication.
  *
- * <p>{@code /api/ai/job-match} is NOT public: it is an internal
- * server-to-server endpoint called by auth-service's recruiter flow (which has
- * already enforced RECRUITER/ADMIN authorization), and it is additionally
- * gated by {@link InternalApiKeyFilter} so the internet cannot call it
- * directly. The GitHub analysis surface ({@code /api/github/**}) is public but
- * rate-limited per client IP with tiered budgets via
- * {@link GitHubRateLimitFilter}.
+ * AI endpoints are rate-limited because they may consume Gemini/API quota.
+ *
+ * Report endpoints require a valid JWT.
+ *
+ * The internal job-match endpoint is protected by InternalApiKeyFilter.
  */
 @Configuration
 @EnableWebSecurity
@@ -49,11 +41,13 @@ public class SecurityConfig {
     private final InternalApiKeyFilter internalApiKeyFilter;
     private final ObjectMapper objectMapper;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter,
-                          AiRateLimitFilter aiRateLimitFilter,
-                          GitHubRateLimitFilter gitHubRateLimitFilter,
-                          InternalApiKeyFilter internalApiKeyFilter,
-                          ObjectMapper objectMapper) {
+    public SecurityConfig(
+            JwtAuthFilter jwtAuthFilter,
+            AiRateLimitFilter aiRateLimitFilter,
+            GitHubRateLimitFilter gitHubRateLimitFilter,
+            InternalApiKeyFilter internalApiKeyFilter,
+            ObjectMapper objectMapper
+    ) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.aiRateLimitFilter = aiRateLimitFilter;
         this.gitHubRateLimitFilter = gitHubRateLimitFilter;
@@ -63,43 +57,151 @@ public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+
         http
+                /*
+                 * CSRF
+                 *
+                 * GitHub analysis endpoints are public GET endpoints.
+                 * Job-match is a server-to-server endpoint protected by
+                 * InternalApiKeyFilter.
+                 *
+                 * Other state-changing endpoints remain protected by CSRF.
+                 */
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+                        .csrfTokenRepository(githubCsrfTokenRepository())
+                        .csrfTokenRequestHandler(
+                                new CsrfTokenRequestAttributeHandler()
+                        )
                         .ignoringRequestMatchers(
-                                "/api/github/**",     // public GET-only analysis surface
-                                "/api/ai/job-match",  // internal server-to-server (X-Internal-Api-Key)
+                                "/api/github/**",
+                                "/api/ai/job-match",
                                 "/api/health",
                                 "/actuator/health"
                         )
                 )
+
+                /*
+                 * CORS
+                 */
                 .cors(Customizer.withDefaults())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                /*
+                 * Stateless API
+                 */
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
+
+                /*
+                 * Authorization
+                 */
                 .authorizeHttpRequests(auth -> auth
+
+                        // Health endpoints
                         .requestMatchers("/api/health").permitAll()
-                        .requestMatchers("/api/github/**").permitAll()
-                        .requestMatchers("/api/ai/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
+
+                        // Public GitHub analysis
+                        .requestMatchers("/api/github/**").permitAll()
+
+                        // AI endpoints are rate-limited separately
+                        .requestMatchers("/api/ai/**").permitAll()
+
+                        // Developer reports require authentication
                         .requestMatchers("/api/reports/**").authenticated()
+
+                        // Preserve existing public behavior for other endpoints
                         .anyRequest().permitAll()
                 )
+
+                /*
+                 * Exception handling
+                 */
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, authException) ->
-                                writeJson(response, HttpServletResponse.SC_UNAUTHORIZED, "Not authenticated"))
+
+                        .authenticationEntryPoint(
+                                (request, response, authException) ->
+                                        writeJson(
+                                                response,
+                                                HttpServletResponse.SC_UNAUTHORIZED,
+                                                "Not authenticated"
+                                        )
+                        )
+
+                        .accessDeniedHandler(
+                                (request, response, accessDeniedException) ->
+                                        writeJson(
+                                                response,
+                                                HttpServletResponse.SC_FORBIDDEN,
+                                                "Access denied"
+                                        )
+                        )
                 )
-                .addFilterBefore(gitHubRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(aiRateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(internalApiKeyFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+
+                /*
+                 * Custom filters
+                 */
+                .addFilterBefore(
+                        gitHubRateLimitFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                )
+
+                .addFilterBefore(
+                        aiRateLimitFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                )
+
+                .addFilterBefore(
+                        internalApiKeyFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                )
+
+                .addFilterBefore(
+                        jwtAuthFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                );
 
         return http.build();
     }
 
-    private void writeJson(HttpServletResponse response, int status, String message) throws java.io.IOException {
+    /**
+     * CSRF repository for github-service.
+     *
+     * Uses service-specific cookie/header names so it does not conflict
+     * with auth-service's CSRF token.
+     */
+    @Bean
+    public CookieCsrfTokenRepository githubCsrfTokenRepository() {
+
+        CookieCsrfTokenRepository repository =
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+
+        repository.setCookieName("GITHUB-XSRF-TOKEN");
+        repository.setHeaderName("X-GITHUB-XSRF-TOKEN");
+
+        return repository;
+    }
+
+    /**
+     * Writes the standard API error response.
+     */
+    private void writeJson(
+            HttpServletResponse response,
+            int status,
+            String message
+    ) throws java.io.IOException {
+
         response.setStatus(status);
         response.setContentType("application/json");
         response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(objectMapper.writeValueAsString(new ApiResponse<>(false, message, null)));
+
+        response.getWriter().write(
+                objectMapper.writeValueAsString(
+                        new ApiResponse<>(false, message, null)
+                )
+        );
     }
 }

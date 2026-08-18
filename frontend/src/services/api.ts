@@ -5,34 +5,38 @@ import axios from "axios";
 // which the dev proxy (vite.config.ts) and the Docker nginx gateway both serve.
 const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined ?? "").replace(/\/$/, "");
 
+// const api = axios.create({
+//   baseURL: `${API_BASE}/api`,
+//   headers: {
+//     "Content-Type": "application/json",
+//   },
+//   // Session tokens ride in HttpOnly cookies (set by login/register/OAuth),
+//   // so every request must send them. Nothing is stored in localStorage.
+//   withCredentials: true,
+// });
 const api = axios.create({
   baseURL: `${API_BASE}/api`,
   headers: {
     "Content-Type": "application/json",
   },
-  // Session tokens ride in HttpOnly cookies (set by login/register/OAuth),
-  // so every request must send them. Nothing is stored in localStorage.
   withCredentials: true,
-});
 
-// ── CSRF: Spring Security's CookieCsrfTokenRepository ──
-// The XSRF-TOKEN cookie (non-HttpOnly) is set by the backend on every response.
-// On mutating requests we read it and send it back as X-XSRF-TOKEN so
-// Spring's CsrfFilter can validate the double-submit cookie.
-function readCsrfToken(): string | null {
-  const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
-  return match ? decodeURIComponent(match[1]) : null;
-}
-
-api.interceptors.request.use((config) => {
-  if (config.method && ["post", "put", "patch", "delete"].includes(config.method.toLowerCase())) {
-    const token = readCsrfToken();
-    if (token) {
-      config.headers["X-XSRF-TOKEN"] = token;
-    }
-  }
-  return config;
+  // Spring Security CSRF configuration
+//   xsrfCookieName: "XSRF-TOKEN",
+//   xsrfHeaderName: "X-XSRF-TOKEN",
+  xsrfCookieName: "GITINSIGHT-XSRF-TOKEN",
+  xsrfHeaderName: "X-GITINSIGHT-XSRF-TOKEN",
 });
+// CSRF is handled by Axios using the configured cookie/header names.
+// auth-service uses:
+//   Cookie: GITINSIGHT-XSRF-TOKEN
+//   Header: X-GITINSIGHT-XSRF-TOKEN
+
+// CSRF is handled by Axios using the configured xsrfCookieName
+// and xsrfHeaderName above. Do not manually add a second CSRF header.
+// The backend uses:
+//   Cookie: GITINSIGHT-XSRF-TOKEN
+//   Header: X-GITINSIGHT-XSRF-TOKEN
 
 // Session change pub/sub: the silent-refresh interceptor below tells
 // AuthProvider when a refresh succeeded (new user) or the session died.
@@ -647,7 +651,10 @@ export const recruiterApi = {
     level?: string;
     languages?: string;
   }): Promise<ApiResponse<SavedCandidate>> => {
-    const { data } = await api.post<ApiResponse<SavedCandidate>>("/recruiter/candidates/save", candidate);
+    const { data } = await api.post<ApiResponse<SavedCandidate>>(
+      "/recruiter/candidates/save",
+      candidate
+    );
     return data;
   },
 

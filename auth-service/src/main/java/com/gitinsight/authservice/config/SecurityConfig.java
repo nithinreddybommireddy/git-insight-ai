@@ -1,21 +1,29 @@
 package com.gitinsight.authservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.gitinsight.authservice.security.CsrfCookieFilter;
 import com.gitinsight.authservice.security.RateLimitFilter;
 import com.gitinsight.common.dto.response.ApiResponse;
 import com.gitinsight.common.security.JwtAuthFilter;
+
 import jakarta.servlet.http.HttpServletResponse;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+
 import org.springframework.security.config.http.SessionCreationPolicy;
+
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
 import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
 import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
 
@@ -26,62 +34,211 @@ public class SecurityConfig {
 
     private final JwtAuthFilter jwtAuthFilter;
     private final RateLimitFilter rateLimitFilter;
+    private final CsrfCookieFilter csrfCookieFilter;
     private final ObjectMapper objectMapper;
 
-    public SecurityConfig(JwtAuthFilter jwtAuthFilter, RateLimitFilter rateLimitFilter, ObjectMapper objectMapper) {
+    public SecurityConfig(
+            JwtAuthFilter jwtAuthFilter,
+            RateLimitFilter rateLimitFilter,
+            CsrfCookieFilter csrfCookieFilter,
+            ObjectMapper objectMapper
+    ) {
         this.jwtAuthFilter = jwtAuthFilter;
         this.rateLimitFilter = rateLimitFilter;
+        this.csrfCookieFilter = csrfCookieFilter;
         this.objectMapper = objectMapper;
     }
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(
+            HttpSecurity http
+    ) throws Exception {
+
         http
+
+                // =========================================================
+                // CSRF
+                // =========================================================
                 .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(new CsrfTokenRequestAttributeHandler())
+
+                        .csrfTokenRepository(csrfTokenRepository())
+
+                        .csrfTokenRequestHandler(
+                                new CsrfTokenRequestAttributeHandler()
+                        )
+
+                        /*
+                         * Authentication endpoints are intentionally
+                         * excluded because login/register/refresh/logout
+                         * establish or change the authentication cookie.
+                         */
                         .ignoringRequestMatchers(
-                                "/api/auth/**",      // login/register/refresh/logout — low CSRF risk
+                                "/api/auth/**",
                                 "/api/health",
                                 "/actuator/health"
                         )
                 )
+
+                // =========================================================
+                // CORS
+                // =========================================================
                 .cors(Customizer.withDefaults())
-                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+
+                // =========================================================
+                // Stateless authentication
+                // =========================================================
+                .sessionManagement(session ->
+                        session.sessionCreationPolicy(
+                                SessionCreationPolicy.STATELESS
+                        )
+                )
+
+                // =========================================================
+                // Authorization
+                // =========================================================
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/auth/register").permitAll()
-                        .requestMatchers("/api/auth/login").permitAll()
-                        .requestMatchers("/api/auth/refresh").permitAll()
-                        .requestMatchers("/api/auth/logout").permitAll()
-                        .requestMatchers("/api/auth/oauth/**").permitAll()
-                        .requestMatchers("/api/health").permitAll()
-                        .requestMatchers("/actuator/health").permitAll()
+
+                        // Authentication
+                        .requestMatchers(
+                                "/api/auth/register",
+                                "/api/auth/login",
+                                "/api/auth/refresh",
+                                "/api/auth/logout",
+                                "/api/auth/oauth/**"
+                        ).permitAll()
+
+                        // Health
+                        .requestMatchers(
+                                "/api/health",
+                                "/actuator/health"
+                        ).permitAll()
+
+                        // Everything else requires authentication
                         .anyRequest().authenticated()
                 )
+
+                // =========================================================
+                // Exception handling
+                // =========================================================
                 .exceptionHandling(ex -> ex
-                        .authenticationEntryPoint((request, response, authException) ->
-                                writeJson(response, HttpServletResponse.SC_UNAUTHORIZED, "Not authenticated"))
-                        .accessDeniedHandler((request, response, accessDeniedException) ->
-                                writeJson(response, HttpServletResponse.SC_FORBIDDEN, "Access denied"))
+
+                        .authenticationEntryPoint(
+                                (request, response, authException) ->
+                                        writeJson(
+                                                response,
+                                                HttpServletResponse.SC_UNAUTHORIZED,
+                                                "Not authenticated"
+                                        )
+                        )
+
+                        .accessDeniedHandler(
+                                (request, response, accessDeniedException) ->
+                                        writeJson(
+                                                response,
+                                                HttpServletResponse.SC_FORBIDDEN,
+                                                "Access denied"
+                                        )
+                        )
                 )
-                // Both custom filters anchor on a registered filter; the rate limiter
-                // only acts on /api/auth/login + /register, so relative order to the
-                // JWT filter is immaterial.
-                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
-                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+
+                // =========================================================
+                // Custom filters
+                // =========================================================
+
+                /*
+                 * Rate limiter
+                 */
+                .addFilterBefore(
+                        rateLimitFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                )
+
+                /*
+                 * JWT authentication
+                 */
+                .addFilterBefore(
+                        jwtAuthFilter,
+                        UsernamePasswordAuthenticationFilter.class
+                )
+
+                /*
+                 * CSRF cookie generation
+                 *
+                 * CsrfFilter creates/loads the deferred CSRF token.
+                 * This filter accesses it and therefore causes the
+                 * CookieCsrfTokenRepository to send the cookie.
+                 */
+                .addFilterAfter(
+                        csrfCookieFilter,
+                        org.springframework.security.web.csrf.CsrfFilter.class
+                );
 
         return http.build();
     }
 
-    private void writeJson(HttpServletResponse response, int status, String message) throws java.io.IOException {
-        response.setStatus(status);
-        response.setContentType("application/json");
-        response.setCharacterEncoding("UTF-8");
-        response.getWriter().write(objectMapper.writeValueAsString(new ApiResponse<>(false, message, null)));
+    // =========================================================
+    // CSRF TOKEN REPOSITORY
+    // =========================================================
+
+    @Bean
+    public CookieCsrfTokenRepository csrfTokenRepository() {
+
+        CookieCsrfTokenRepository repository =
+                CookieCsrfTokenRepository.withHttpOnlyFalse();
+
+        /*
+         * Browser-readable CSRF cookie.
+         */
+        repository.setCookieName(
+                "GITINSIGHT-XSRF-TOKEN"
+        );
+
+        /*
+         * Header expected from the frontend.
+         */
+        repository.setHeaderName(
+                "X-GITINSIGHT-XSRF-TOKEN"
+        );
+
+        /*
+         * Make sure the cookie is available to the entire application.
+         */
+        repository.setCookiePath("/");
+
+        return repository;
     }
+
+    // =========================================================
+    // PASSWORD ENCODER
+    // =========================================================
 
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
+    }
+
+    // =========================================================
+    // JSON ERROR RESPONSE
+    // =========================================================
+
+    private void writeJson(
+            HttpServletResponse response,
+            int status,
+            String message
+    ) throws java.io.IOException {
+
+        response.setStatus(status);
+        response.setContentType("application/json");
+        response.setCharacterEncoding("UTF-8");
+
+        response.getWriter().write(
+                objectMapper.writeValueAsString(
+                        new ApiResponse<>(
+                                false,
+                                message,
+                                null
+                        )
+                )
+        );
     }
 }

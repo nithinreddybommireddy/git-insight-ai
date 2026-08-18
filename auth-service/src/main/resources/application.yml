@@ -86,3 +86,6 @@ app:
       # Where the browser lands after a successful login (frontend token-consumer route).
       frontend-redirect-uri: ${OAUTH_FRONTEND_REDIRECT_URI:http://localhost:5173/auth/callback}
   github-service-url: ${GITHUB_SERVICE_URL:http://localhost:8081}
+logging:
+  level:
+    org.springframework.security: DEBUG
