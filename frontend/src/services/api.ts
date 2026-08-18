@@ -19,6 +19,8 @@ const api = axios.create({
 // The XSRF-TOKEN cookie (non-HttpOnly) is set by the backend on every response.
 // On mutating requests we read it and send it back as X-XSRF-TOKEN so
 // Spring's CsrfFilter can validate the double-submit cookie.
+// Both auth-service and github-service use the same cookie/header names
+// (XSRF-TOKEN / X-XSRF-TOKEN) so one interceptor handles all requests.
 function readCsrfToken(): string | null {
   const match = document.cookie.match(/(?:^|;\s*)XSRF-TOKEN=([^;]*)/);
   return match ? decodeURIComponent(match[1]) : null;
@@ -647,7 +649,10 @@ export const recruiterApi = {
     level?: string;
     languages?: string;
   }): Promise<ApiResponse<SavedCandidate>> => {
-    const { data } = await api.post<ApiResponse<SavedCandidate>>("/recruiter/candidates/save", candidate);
+    const { data } = await api.post<ApiResponse<SavedCandidate>>(
+      "/recruiter/candidates/save",
+      candidate
+    );
     return data;
   },
 

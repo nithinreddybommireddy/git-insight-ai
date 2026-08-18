@@ -137,25 +137,31 @@ export function RecruiterDashboard() {
 
   const handleSaveProfile = async () => {
     if (!searchQuery.trim()) return;
+
     try {
       const profile = await githubApi.getProfile(searchQuery.trim());
-      if (profile.success) {
-        const p = profile.data;
-        await recruiterApi.saveCandidate({
-          username: p.username,
-          name: p.name || undefined,
-          avatarUrl: p.avatarUrl,
-          githubId: p.githubId,
-        });
-        toast.success(`${p.name || p.username} saved as candidate!`);
-        loadCandidates();
-        setSearchQuery("");
+
+      if (!profile.success || !profile.data) {
+        toast.error("Could not find that GitHub user");
+        return;
       }
-    } catch {
-      toast.error("Could not find that GitHub user");
+
+      const p = profile.data;
+
+      await recruiterApi.saveCandidate({
+        username: p.username,
+        name: p.name || undefined,
+        avatarUrl: p.avatarUrl,
+        githubId: p.githubId,
+      });
+
+      toast.success(`${p.name || p.username} saved as candidate!`);
+      loadCandidates();
+      setSearchQuery("");
+    } catch (error) {
+      toast.error("Failed to save candidate");
     }
   };
-
   const handleUnsave = async (username: string) => {
     try {
       await recruiterApi.unsaveCandidate(username);

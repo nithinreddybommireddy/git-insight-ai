@@ -12,4 +12,5 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByGithubId(Long githubId);
 
     boolean existsByEmail(String email);
+    long countByRole(User.Role role);
 }
