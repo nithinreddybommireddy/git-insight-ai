@@ -19,15 +19,18 @@ import reactor.core.publisher.Mono;
 import java.util.List;
 
 /**
- * Global gateway filter that validates JWT tokens on protected routes and
- * forwards authenticated user identity to downstream services via headers.
+ * Global gateway filter that validates JWT tokens and enforces role-based
+ * authorization at the gateway level.
  *
  * <p>Public routes (auth endpoints, OAuth, health) are excluded — they do
- * not require a valid token at the gateway level.
+ * not require a valid token.
  *
- * <p>When a valid token is present, the filter extracts the user ID, email,
- * role, and token type, then adds them as forwarded headers so downstream
- * services can trust the gateway-authenticated identity.
+ * <p>Protected routes require a valid JWT. For role-protected paths
+ * ({@code /api/recruiter/**}, {@code /api/admin/**}), the JWT must carry
+ * the appropriate role claim.
+ *
+ * <p>Critical security: spoofable identity headers from the client are
+ * stripped before adding JWT-derived values, preventing header injection.
  *
  * <p>Token sources (in priority order):
  * <ol>
@@ -40,11 +43,15 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
-    private static final String HEADER_USER_ID = "X-User-Id";
-    private static final String HEADER_USER_EMAIL = "X-User-Email";
-    private static final String HEADER_USER_ROLE = "X-User-Role";
-    private static final String HEADER_TOKEN_TYPE = "X-Token-Type";
+    /** Headers the gateway derives from JWT — strip any client-supplied values first. */
+    private static final List<String> TRUSTED_HEADERS = List.of(
+            "X-User-Id",
+            "X-User-Email",
+            "X-User-Role",
+            "X-Token-Type"
+    );
 
+    /** Paths that are always public — no JWT required. */
     private static final List<String> PUBLIC_PREFIXES = List.of(
             "/api/auth/register",
             "/api/auth/login",
@@ -53,6 +60,16 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/auth/oauth",
             "/api/health",
             "/actuator"
+    );
+
+    /** Paths that require the RECRUITER or ADMIN role. */
+    private static final List<String> RECRUITER_PREFIXES = List.of(
+            "/api/recruiter/"
+    );
+
+    /** Paths that require the ADMIN role. */
+    private static final List<String> ADMIN_PREFIXES = List.of(
+            "/api/admin/"
     );
 
     private final JwtUtil jwtUtil;
@@ -74,48 +91,50 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         // Extract token from Authorization header or cookie
         String token = extractToken(request);
         if (token == null) {
-            // No token — let downstream services decide if auth is required.
-            // Some endpoints (e.g. public GitHub analysis) don't need a token.
-            return chain.filter(exchange);
+            // No token — reject. Gateway enforces authentication for all non-public routes.
+            log.debug("No JWT token for protected path: {}", path);
+            return forbidden(exchange, "Authentication required");
         }
 
-        // Validate token
+        // Validate token signature and expiry
         if (!jwtUtil.validateToken(token)) {
             log.debug("Invalid JWT for path: {}", path);
-            ServerHttpResponse response = exchange.getResponse();
-            response.setStatusCode(HttpStatus.UNAUTHORIZED);
-            response.getHeaders().add("Content-Type", "application/json");
-            return response.writeWith(Mono.just(
-                    response.bufferFactory().wrap(
-                            "{\"status\":401,\"message\":\"Invalid or expired token\"}".getBytes()
-                    )
-            ));
+            return unauthorized(exchange, "Invalid or expired token");
         }
 
         // Check token type — only access tokens authorize API requests
         String tokenType = jwtUtil.getTokenType(token);
         if (!JwtUtil.TOKEN_TYPE_ACCESS.equals(tokenType)) {
             log.debug("Non-access token rejected for path: {}", path);
-            ServerHttpResponse response = exchange.getResponse();
-            response.setStatusCode(HttpStatus.UNAUTHORIZED);
-            response.getHeaders().add("Content-Type", "application/json");
-            return response.writeWith(Mono.just(
-                    response.bufferFactory().wrap(
-                            "{\"status\":401,\"message\":\"Invalid token type\"}".getBytes()
-                    )
-            ));
+            return unauthorized(exchange, "Invalid token type");
         }
 
-        // Extract claims and forward to downstream services
+        // Extract role and enforce path-based authorization
+        String role = jwtUtil.getRoleFromToken(token);
+        if (isAdminPath(path) && !"ADMIN".equals(role)) {
+            log.debug("Non-ADMIN role '{}' rejected for admin path: {}", role, path);
+            return forbidden(exchange, "Access denied");
+        }
+        if (isRecruiterPath(path) && !"RECRUITER".equals(role) && !"ADMIN".equals(role)) {
+            log.debug("Non-recruiter role '{}' rejected for recruiter path: {}", role, path);
+            return forbidden(exchange, "Access denied");
+        }
+
         Long userId = jwtUtil.getUserIdFromToken(token);
         String email = jwtUtil.getEmailFromToken(token);
-        String role = jwtUtil.getRoleFromToken(token);
 
+        // Strip spoofable headers BEFORE adding trusted JWT-derived values.
+        // A malicious client could send X-User-Role: ADMIN — we must remove it first.
         ServerHttpRequest mutatedRequest = request.mutate()
-                .header(HEADER_USER_ID, String.valueOf(userId))
-                .header(HEADER_USER_EMAIL, email != null ? email : "")
-                .header(HEADER_USER_ROLE, role != null ? role : "")
-                .header(HEADER_TOKEN_TYPE, tokenType)
+                .headers(headers -> {
+                    for (String header : TRUSTED_HEADERS) {
+                        headers.remove(header);
+                    }
+                })
+                .header("X-User-Id", String.valueOf(userId))
+                .header("X-User-Email", email != null ? email : "")
+                .header("X-User-Role", role != null ? role : "")
+                .header("X-Token-Type", tokenType)
                 .build();
 
         return chain.filter(exchange.mutate().request(mutatedRequest).build());
@@ -123,13 +142,25 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        // Run early in the filter chain, after CORS but before routing
+        // Run early — after CORS but before routing
         return Ordered.HIGHEST_PRECEDENCE + 10;
     }
+
+    // ── Route classification ────────────────────────────────────────
 
     private boolean isPublicRoute(String path) {
         return PUBLIC_PREFIXES.stream().anyMatch(path::startsWith);
     }
+
+    private boolean isRecruiterPath(String path) {
+        return RECRUITER_PREFIXES.stream().anyMatch(path::startsWith);
+    }
+
+    private boolean isAdminPath(String path) {
+        return ADMIN_PREFIXES.stream().anyMatch(path::startsWith);
+    }
+
+    // ── Token extraction ────────────────────────────────────────────
 
     private String extractToken(ServerHttpRequest request) {
         // 1. Authorization header
@@ -145,5 +176,29 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         }
 
         return null;
+    }
+
+    // ── Error responses ─────────────────────────────────────────────
+
+    private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.UNAUTHORIZED);
+        response.getHeaders().add("Content-Type", "application/json");
+        return response.writeWith(Mono.just(
+                response.bufferFactory().wrap(
+                        String.format("{\"status\":401,\"message\":\"%s\"}", message).getBytes()
+                )
+        ));
+    }
+
+    private Mono<Void> forbidden(ServerWebExchange exchange, String message) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.FORBIDDEN);
+        response.getHeaders().add("Content-Type", "application/json");
+        return response.writeWith(Mono.just(
+                response.bufferFactory().wrap(
+                        String.format("{\"status\":403,\"message\":\"%s\"}", message).getBytes()
+                )
+        ));
     }
 }

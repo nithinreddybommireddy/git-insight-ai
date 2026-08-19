@@ -338,17 +338,18 @@ GitInsight AI follows a **Spring Cloud Microservices Architecture**.
                          ┌─────────────────────────┐
                          │ React + TypeScript       │
                          │ Vite + Tailwind          │
-                         │ Port: 5173               │
+                         │ (Vercel)                 │
                          └────────────┬────────────┘
                                       │
-                                      │ /api
+                                      │ HTTPS
                                       ▼
                          ┌─────────────────────────┐
-                         │ Spring Cloud Ecosystem  │
-                         │                         │
-                         │ Eureka Service Registry │
-                         │ Port: 8761              │
+                         │    API Gateway           │
+                         │    Port: 8080            │
+                         │    Spring Cloud Gateway  │
                          └────────────┬────────────┘
+                                      │
+                         Eureka Service Discovery
                                       │
              ┌────────────────────────┼────────────────────────┐
              │                        │                        │
@@ -381,6 +382,7 @@ GitInsight AI follows a **Spring Cloud Microservices Architecture**.
 
 | Service | Port | Responsibility |
 |---|---:|---|
+| `api-gateway` | 8080 | JWT validation, CORS, routing, role-based authorization |
 | `eureka-server` | 8761 | Service discovery |
 | `github-service` | 8081 | GitHub integration, scoring, AI, reports |
 | `analytics-service` | 8082 | Developer analytics |
@@ -395,7 +397,10 @@ GitInsight AI follows a **Spring Cloud Microservices Architecture**.
 GitInsight-AI/
 │
 ├── common/
-│   └── Shared DTOs and common components
+│   └── Shared DTOs, JWT, CSRF, security components
+│
+├── api-gateway/
+│   └── Spring Cloud Gateway — JWT validation, CORS, routing
 │
 ├── eureka-server/
 │   └── Service registry
@@ -431,6 +436,7 @@ GitInsight-AI/
 ├── start-dev.sh
 ├── start-services.sh
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── Dockerfile
 ├── mvnw
 └── README.md
@@ -979,6 +985,7 @@ Use organization analytics to understand:
 - ✅ Organization analytics
 - ✅ Team analytics
 - ✅ Docker deployment
+- ✅ API Gateway with JWT validation
 - ✅ Automated tests
 - ✅ E2E contract testing
 - ✅ Load testing support

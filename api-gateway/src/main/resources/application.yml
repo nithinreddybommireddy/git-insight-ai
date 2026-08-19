@@ -6,21 +6,31 @@ spring:
     gateway:
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
-        - name: ForwardPath
+
       routes:
         # ── Auth Service ──────────────────────────────────────────────
         - id: auth-service
           uri: lb://AUTH-SERVICE
           predicates:
             - Path=/api/auth/**
+          metadata:
+            response-timeout: 60000
+            connect-timeout: 5000
+
+        # ── Recruiter Service (auth-service) ──────────────────────────
+        - id: recruiter-service
+          uri: lb://AUTH-SERVICE
+          predicates:
             - Path=/api/recruiter/**
+          metadata:
+            response-timeout: 60000
+            connect-timeout: 5000
+
+        # ── Admin Service (auth-service) ──────────────────────────────
+        - id: admin-service
+          uri: lb://AUTH-SERVICE
+          predicates:
             - Path=/api/admin/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: auth-service-cb
-                fallbackUri: forward:/fallback/auth
-            - StripPrefix=0
           metadata:
             response-timeout: 60000
             connect-timeout: 5000
@@ -30,42 +40,24 @@ spring:
           uri: lb://GITHUB-SERVICE
           predicates:
             - Path=/api/github/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: github-service-cb
-                fallbackUri: forward:/fallback/github
-            - StripPrefix=0
           metadata:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── AI Service ────────────────────────────────────────────────
+        # ── AI Service (github-service) ──────────────────────────────
         - id: ai-service
           uri: lb://GITHUB-SERVICE
           predicates:
             - Path=/api/ai/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: ai-service-cb
-                fallbackUri: forward:/fallback/ai
-            - StripPrefix=0
           metadata:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── Reports Service ───────────────────────────────────────────
+        # ── Reports Service (github-service) ─────────────────────────
         - id: reports-service
           uri: lb://GITHUB-SERVICE
           predicates:
             - Path=/api/reports/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: reports-service-cb
-                fallbackUri: forward:/fallback/reports
-            - StripPrefix=0
           metadata:
             response-timeout: 120000
             connect-timeout: 5000
@@ -75,12 +67,6 @@ spring:
           uri: lb://ANALYTICS-SERVICE
           predicates:
             - Path=/api/analytics/**
-          filters:
-            - name: CircuitBreaker
-              args:
-                name: analytics-service-cb
-                fallbackUri: forward:/fallback/analytics
-            - StripPrefix=0
           metadata:
             response-timeout: 60000
             connect-timeout: 5000

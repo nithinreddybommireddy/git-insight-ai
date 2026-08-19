@@ -5,9 +5,13 @@
 #   docker compose up --build
 #
 #   Frontend:   http://localhost:5173
+#   Gateway:    http://localhost:8080  (all /api/** routes)
 #   Eureka:     http://localhost:8761
-#   GitHub API: http://localhost:8081/api/github/...
-#   Auth API:   http://localhost:8083/api/auth/...
+#   GitHub API: http://localhost:8081  (internal)
+#   Auth API:   http://localhost:8083  (internal)
+#
+#   Production: all traffic goes through the Gateway (port 8080).
+#   Internal service ports are for local debugging only.
 #
 # Required env: JWT_SECRET (32+ random bytes — the app refuses to boot without it)
 # Optional env: GITHUB_TOKEN (5,000 GitHub req/hr), GEMINI_API_KEY,

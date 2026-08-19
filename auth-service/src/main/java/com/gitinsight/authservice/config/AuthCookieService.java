@@ -15,19 +15,25 @@ import org.springframework.stereotype.Component;
  * token's lifetime, the refresh cookie for the refresh token's lifetime, and
  * both are scoped to the site root.
  *
- * <p>{@code SameSite=Lax} keeps the cookies out of cross-site requests while
- * preserving the top-level navigation that the GitHub OAuth redirect needs.
- * The {@code Secure} flag is off by default because local development runs
- * over http://localhost; production deployments behind HTTPS must set
- * {@code AUTH_COOKIE_SECURE=true}.
+ * <p>Production (Vercel frontend + Railway gateway on different origins) requires
+ * {@code SameSite=None} + {@code Secure} so the browser sends cookies on
+ * cross-origin XHR/fetch requests. Local development uses {@code SameSite=Lax}
+ * because everything runs on the same origin.
+ *
+ * <p>Set {@code AUTH_COOKIE_SECURE=true} in production to enable the
+ * {@code Secure} flag on all cookies.
  */
 @Component
 public class AuthCookieService {
 
     private final boolean secure;
+    private final String sameSite;
 
-    public AuthCookieService(@Value("${app.auth.cookie-secure:false}") boolean secure) {
+    public AuthCookieService(
+            @Value("${app.auth.cookie-secure:false}") boolean secure,
+            @Value("${app.auth.cookie-same-site:Lax}") String sameSite) {
         this.secure = secure;
+        this.sameSite = sameSite;
     }
 
     /** Build a {@code Set-Cookie} header value for the access token. */
@@ -35,7 +41,7 @@ public class AuthCookieService {
         return ResponseCookie.from(AuthCookieNames.ACCESS, token)
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path("/")
                 .maxAge(maxAgeSeconds)
                 .build()
@@ -47,7 +53,7 @@ public class AuthCookieService {
         return ResponseCookie.from(AuthCookieNames.REFRESH, token)
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path("/")
                 .maxAge(maxAgeSeconds)
                 .build()
@@ -59,7 +65,7 @@ public class AuthCookieService {
         return ResponseCookie.from(AuthCookieNames.ACCESS, "")
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path("/")
                 .maxAge(0)
                 .build()
@@ -70,7 +76,7 @@ public class AuthCookieService {
         return ResponseCookie.from(AuthCookieNames.REFRESH, "")
                 .httpOnly(true)
                 .secure(secure)
-                .sameSite("Lax")
+                .sameSite(sameSite)
                 .path("/")
                 .maxAge(0)
                 .build()
