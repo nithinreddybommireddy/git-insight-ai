@@ -23,6 +23,7 @@
         <module>github-service</module>
         <module>analytics-service</module>
         <module>auth-service</module>
+        <module>api-gateway</module>
         <module>e2e-tests</module>
     </modules>
 

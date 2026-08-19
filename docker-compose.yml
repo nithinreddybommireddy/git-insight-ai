@@ -134,6 +134,27 @@ services:
       redis:
         condition: service_healthy
 
+  api-gateway:
+    build:
+      context: .
+      target: api-gateway
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://eureka-server:8761/eureka/
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
+      JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174}
+      REDIS_HOST: redis
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    ports:
+      - "8080:8080"
+    depends_on:
+      eureka-server:
+        condition: service_healthy
+      auth-service:
+        condition: service_started
+      github-service:
+        condition: service_started
+
   frontend:
     build:
       context: .
@@ -141,6 +162,7 @@ services:
     ports:
       - "5173:80"
     depends_on:
+      - api-gateway
       - github-service
       - auth-service
 

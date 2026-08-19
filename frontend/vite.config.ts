@@ -14,16 +14,11 @@ export default defineConfig({
   server: {
     hmr: false,
     proxy: {
-      '/api/auth': {
-        target: 'http://localhost:8083',
-        changeOrigin: true,
-      },
-      '/api/recruiter': {
-        target: 'http://localhost:8083',
-        changeOrigin: true,
-      },
+      // All /api requests go through the API Gateway (port 8080).
+      // The gateway uses Eureka service discovery to route to auth-service,
+      // github-service, or analytics-service automatically.
       '/api': {
-        target: 'http://localhost:8081',
+        target: 'http://localhost:8080',
         changeOrigin: true,
       },
     },

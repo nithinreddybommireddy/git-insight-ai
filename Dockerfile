@@ -46,3 +46,10 @@ WORKDIR /app
 COPY --from=build /build/auth-service/target/auth-service-*-exec.jar app.jar
 EXPOSE 8083
 ENTRYPOINT ["java", "-jar", "app.jar"]
+
+# ---------- Runtime: API Gateway (8080) ----------
+FROM eclipse-temurin:21-jre AS api-gateway
+WORKDIR /app
+COPY --from=build /build/api-gateway/target/api-gateway-*-exec.jar app.jar
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]

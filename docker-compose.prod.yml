@@ -64,6 +64,10 @@ services:
     ports: !reset []
     restart: unless-stopped
 
+  api-gateway:
+    ports: !reset []
+    restart: unless-stopped
+
   frontend:
     ports:
       - "80:80"
