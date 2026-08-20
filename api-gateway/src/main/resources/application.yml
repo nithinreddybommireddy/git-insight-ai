@@ -62,7 +62,7 @@ spring:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── Analytics Service ─────────────────────────────────────────
+        # ── Analytics Service (placeholder — currently only health) ───
         - id: analytics-service
           uri: lb://ANALYTICS-SERVICE
           predicates:
@@ -75,13 +75,6 @@ spring:
       httpclient:
         connect-timeout: 5000
         response-timeout: 60s
-
-  data:
-    redis:
-      host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
-      password: ${REDIS_PASSWORD:}
-      timeout: 2s
 
 eureka:
   client:

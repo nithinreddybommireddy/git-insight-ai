@@ -385,7 +385,7 @@ GitInsight AI follows a **Spring Cloud Microservices Architecture**.
 | `api-gateway` | 8080 | JWT validation, CORS, routing, role-based authorization |
 | `eureka-server` | 8761 | Service discovery |
 | `github-service` | 8081 | GitHub integration, scoring, AI, reports |
-| `analytics-service` | 8082 | Developer analytics |
+| `analytics-service` | 8082 | Developer analytics (placeholder — health endpoint only) |
 | `auth-service` | 8083 | Authentication, OAuth, JWT, roles |
 | `frontend` | 5173 | React web application |
 
@@ -409,7 +409,7 @@ GitInsight-AI/
 │   └── GitHub API, scoring, AI, reports
 │
 ├── analytics-service/
-│   └── Developer analytics
+│   └── Developer analytics (placeholder — health endpoint only)
 │
 ├── auth-service/
 │   └── JWT authentication, OAuth, recruiter functionality
@@ -571,7 +571,7 @@ JWT_SECRET=your_random_32_byte_or_longer_secret
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 
-GITHUB_OAUTH_REDIRECT_URI=http://localhost:8083/api/auth/oauth/github/callback
+GITHUB_OAUTH_REDIRECT_URI=http://localhost:8080/api/auth/oauth/github/callback
 OAUTH_FRONTEND_REDIRECT_URI=http://localhost:5173/auth/callback
 ```
 
@@ -707,13 +707,17 @@ The Docker setup contains:
 ```text
 PostgreSQL
     +
+Redis
+    +
 Eureka
+    +
+API Gateway
     +
 Auth Service
     +
 GitHub Service
     +
-Analytics Service
+Analytics Service (placeholder)
     +
 Frontend / Nginx
 ```

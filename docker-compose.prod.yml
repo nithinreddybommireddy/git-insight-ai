@@ -4,10 +4,10 @@
 # Usage:  docker compose -f docker-compose.yml -f docker-compose.prod.yml up --build -d
 #
 # Differences from the dev stack (docker-compose.yml):
-#   • No service publishes a host port. PostgreSQL, Redis, Eureka and the three
+#   • No service publishes a host port. PostgreSQL, Redis, Eureka and all
 #     Spring services are reachable ONLY inside the private Docker network.
 #   • Only the frontend (nginx, which serves the SPA and proxies /api to the
-#     services internally) is exposed — on port 80.
+#     API Gateway internally) is exposed — on port 80.
 #
 # Resulting topology:
 #
@@ -21,9 +21,15 @@
 #                      │
 #           Private Docker Network
 #                      │
+#                 ┌────▼─────┐
+#                 │ Gateway  │   :8080 (internal)
+#                 │ :8080    │   JWT validation, CORS, routing
+#                 └────┬─────┘
+#                      │
 #        ┌─────────────┼─────────────┐
 #        │             │             │
 #      Auth         GitHub       Analytics
+#      :8083        :8081        :8082
 #        │             │
 #        └──────┬──────┘
 #               │
@@ -32,7 +38,8 @@
 #      Redis       PostgreSQL
 #
 # Requirements (see docs/DEPLOYMENT.md for the full list):
-#   AUTH_COOKIE_SECURE=true  JWT_SECRET=<64+ random bytes>
+#   AUTH_COOKIE_SECURE=true  AUTH_COOKIE_SAME_SITE=None
+#   JWT_SECRET=<64+ random bytes>
 #   POSTGRES_PASSWORD / REDIS_PASSWORD / INTERNAL_API_KEY = strong secrets
 #   CORS_ALLOWED_ORIGINS, GITHUB_OAUTH_REDIRECT_URI, OAUTH_FRONTEND_REDIRECT_URI
 #   = exact production HTTPS URLs

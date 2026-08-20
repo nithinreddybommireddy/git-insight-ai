@@ -22,15 +22,16 @@ import java.util.List;
  * Global gateway filter that validates JWT tokens and enforces role-based
  * authorization at the gateway level.
  *
- * <p>Public routes (auth endpoints, OAuth, health) are excluded — they do
- * not require a valid token.
- *
- * <p>Protected routes require a valid JWT. For role-protected paths
- * ({@code /api/recruiter/**}, {@code /api/admin/**}), the JWT must carry
- * the appropriate role claim.
- *
- * <p>Critical security: spoofable identity headers from the client are
- * stripped before adding JWT-derived values, preventing header injection.
+ * <p>Security flow:
+ * <ol>
+ *   <li>Strip ALL spoofable identity headers from the client request immediately.
+ *       This prevents header injection even on public routes.</li>
+ *   <li>If the path is public, forward the stripped request without JWT validation.</li>
+ *   <li>For protected paths, extract and validate the JWT.</li>
+ *   <li>For role-protected paths ({@code /api/recruiter/**}, {@code /api/admin/**}),
+ *       enforce the required role.</li>
+ *   <li>Add JWT-derived trusted identity headers before forwarding.</li>
+ * </ol>
  *
  * <p>Token sources (in priority order):
  * <ol>
@@ -83,33 +84,42 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         ServerHttpRequest request = exchange.getRequest();
         String path = request.getURI().getPath();
 
-        // Public routes — pass through without JWT validation
+        // Step 1: ALWAYS strip spoofable identity headers, even on public routes.
+        // A malicious client should never be able to inject X-User-Role: ADMIN.
+        ServerHttpRequest strippedRequest = request.mutate()
+                .headers(headers -> {
+                    for (String header : TRUSTED_HEADERS) {
+                        headers.remove(header);
+                    }
+                })
+                .build();
+
+        // Step 2: Public routes — forward the stripped request without JWT validation.
         if (isPublicRoute(path)) {
-            return chain.filter(exchange);
+            return chain.filter(exchange.mutate().request(strippedRequest).build());
         }
 
-        // Extract token from Authorization header or cookie
-        String token = extractToken(request);
+        // Step 3: Extract token from Authorization header or cookie.
+        String token = extractToken(strippedRequest);
         if (token == null) {
-            // No token — reject. Gateway enforces authentication for all non-public routes.
             log.debug("No JWT token for protected path: {}", path);
-            return forbidden(exchange, "Authentication required");
+            return unauthorized(exchange, "Authentication required");
         }
 
-        // Validate token signature and expiry
+        // Step 4: Validate token signature and expiry.
         if (!jwtUtil.validateToken(token)) {
             log.debug("Invalid JWT for path: {}", path);
             return unauthorized(exchange, "Invalid or expired token");
         }
 
-        // Check token type — only access tokens authorize API requests
+        // Step 5: Check token type — only access tokens authorize API requests.
         String tokenType = jwtUtil.getTokenType(token);
         if (!JwtUtil.TOKEN_TYPE_ACCESS.equals(tokenType)) {
             log.debug("Non-access token rejected for path: {}", path);
             return unauthorized(exchange, "Invalid token type");
         }
 
-        // Extract role and enforce path-based authorization
+        // Step 6: Extract role and enforce path-based authorization.
         String role = jwtUtil.getRoleFromToken(token);
         if (isAdminPath(path) && !"ADMIN".equals(role)) {
             log.debug("Non-ADMIN role '{}' rejected for admin path: {}", role, path);
@@ -120,24 +130,18 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return forbidden(exchange, "Access denied");
         }
 
+        // Step 7: Add JWT-derived trusted identity headers.
         Long userId = jwtUtil.getUserIdFromToken(token);
         String email = jwtUtil.getEmailFromToken(token);
 
-        // Strip spoofable headers BEFORE adding trusted JWT-derived values.
-        // A malicious client could send X-User-Role: ADMIN — we must remove it first.
-        ServerHttpRequest mutatedRequest = request.mutate()
-                .headers(headers -> {
-                    for (String header : TRUSTED_HEADERS) {
-                        headers.remove(header);
-                    }
-                })
+        ServerHttpRequest authenticatedRequest = strippedRequest.mutate()
                 .header("X-User-Id", String.valueOf(userId))
                 .header("X-User-Email", email != null ? email : "")
                 .header("X-User-Role", role != null ? role : "")
                 .header("X-Token-Type", tokenType)
                 .build();
 
-        return chain.filter(exchange.mutate().request(mutatedRequest).build());
+        return chain.filter(exchange.mutate().request(authenticatedRequest).build());
     }
 
     @Override
