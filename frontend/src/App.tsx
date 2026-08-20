@@ -13,6 +13,8 @@ import { SearchResults } from "@/pages/SearchResults";
 import { ComparePage } from "@/pages/ComparePage";
 import { Login } from "@/pages/Login";
 import { Register } from "@/pages/Register";
+import { ForgotPassword } from "@/pages/ForgotPassword";
+import { ResetPassword } from "@/pages/ResetPassword";
 import { OAuthCallback } from "@/pages/OAuthCallback";
 import { Dashboard } from "@/pages/Dashboard";
 import { RecruiterDashboard } from "@/pages/RecruiterDashboard";
@@ -92,6 +94,8 @@ function AppRoutes() {
           />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+          <Route path="/auth/reset-password" element={<ResetPassword />} />
           <Route path="/auth/callback" element={<OAuthCallback />} />
           <Route
             path="/dashboard"

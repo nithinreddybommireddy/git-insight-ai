@@ -92,7 +92,8 @@ api.interceptors.response.use(
     const url: string = error?.config?.url ?? "";
     const isAuthEndpoint =
       url.includes("/auth/login") || url.includes("/auth/register") ||
-      url.includes("/auth/refresh") || url.includes("/auth/logout");
+      url.includes("/auth/refresh") || url.includes("/auth/logout") ||
+      url.includes("/auth/forgot-password") || url.includes("/auth/reset-password");
     if (status === 401 && !isAuthEndpoint && !(error.config as { _retry?: boolean } | undefined)?._retry) {
       const config = error.config as { _retry?: boolean };
       config._retry = true;
@@ -289,6 +290,18 @@ export const authApi = {
   /** Clear the HttpOnly session cookies server-side. */
   logout: async (): Promise<ApiResponse<void>> => {
     const { data } = await api.post<ApiResponse<void>>("/auth/logout");
+    return data;
+  },
+
+  /** Request a password reset link for the given email. */
+  forgotPassword: async (email: string): Promise<ApiResponse<void>> => {
+    const { data } = await api.post<ApiResponse<void>>("/auth/forgot-password", { email });
+    return data;
+  },
+
+  /** Reset password using a valid token and the new password. */
+  resetPassword: async (token: string, newPassword: string): Promise<ApiResponse<void>> => {
+    const { data } = await api.post<ApiResponse<void>>("/auth/reset-password", { token, newPassword });
     return data;
   },
 

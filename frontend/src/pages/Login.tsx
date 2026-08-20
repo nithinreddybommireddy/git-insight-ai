@@ -90,7 +90,15 @@ export function Login() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Password</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-sm font-medium">Password</label>
+                    <Link
+                      to="/auth/forgot-password"
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Forgot password?
+                    </Link>
+                  </div>
                   <div className="relative">
                     <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input

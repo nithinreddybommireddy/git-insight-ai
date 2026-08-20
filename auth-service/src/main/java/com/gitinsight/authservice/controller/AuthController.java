@@ -5,6 +5,7 @@ import com.gitinsight.authservice.config.OAuthProperties;
 import com.gitinsight.authservice.dto.*;
 import com.gitinsight.authservice.security.OAuthStateStore;
 import com.gitinsight.authservice.service.AuthService;
+import com.gitinsight.authservice.service.PasswordResetService;
 import com.gitinsight.common.dto.response.ApiResponse;
 import jakarta.servlet.http.Cookie;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ public class AuthController {
     private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private final AuthService authService;
+    private final PasswordResetService passwordResetService;
     private final OAuthProperties oauthProperties;
     private final OAuthStateStore oauthStateStore;
     private final AuthCookieService authCookieService;
@@ -37,12 +39,14 @@ public class AuthController {
     private final long refreshMaxAgeSeconds;
 
     public AuthController(AuthService authService,
+                          PasswordResetService passwordResetService,
                           OAuthProperties oauthProperties,
                           OAuthStateStore oauthStateStore,
                           AuthCookieService authCookieService,
                           @Value("${app.jwt.expiration-ms}") long accessExpirationMs,
                           @Value("${app.jwt.refresh-expiration-ms}") long refreshExpirationMs) {
         this.authService = authService;
+        this.passwordResetService = passwordResetService;
         this.oauthProperties = oauthProperties;
         this.oauthStateStore = oauthStateStore;
         this.authCookieService = authCookieService;
@@ -139,6 +143,52 @@ public class AuthController {
         }
     }
 
+    // =========================================================
+    // PASSWORD RESET
+    // =========================================================
+
+    /**
+     * Request a password reset link. Always returns the same generic response
+     * to prevent email/account enumeration — whether the account exists or not.
+     */
+    @PostMapping("/forgot-password")
+    public ResponseEntity<ApiResponse<Void>> forgotPassword(@Valid @RequestBody ForgotPasswordRequest request) {
+        try {
+            passwordResetService.requestReset(request.getEmail());
+        } catch (Exception e) {
+            // Never expose internal details — log server-side only.
+            log.error("Error processing forgot-password request", e);
+        }
+        // Always return the same response to prevent email enumeration.
+        return ResponseEntity.ok(new ApiResponse<>(true,
+                "If the account exists, a password reset link has been sent.", null));
+    }
+
+    /**
+     * Reset password using a valid, unexpired token. The token itself is the
+     * authentication mechanism — no JWT is required for this endpoint.
+     */
+    @PostMapping("/reset-password")
+    public ResponseEntity<ApiResponse<Void>> resetPassword(@Valid @RequestBody ResetPasswordRequest request) {
+        try {
+            passwordResetService.resetPassword(request.getToken(), request.getNewPassword());
+            return ResponseEntity.ok(new ApiResponse<>(true,
+                    "Password reset successful. Please log in again.", null));
+        } catch (IllegalArgumentException e) {
+            // Known: invalid/expired/used token — safe to expose.
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, e.getMessage(), null));
+        } catch (RuntimeException e) {
+            log.error("Unexpected error during password reset", e);
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, "Password reset failed. Please try again.", null));
+        }
+    }
+
+    // =========================================================
+    // OAUTH
+    // =========================================================
+
     /**
      * GitHub OAuth entry point. Generates a random state (stored server-side
      * against the configured post-login destination), then redirects the browser
@@ -207,6 +257,10 @@ public class AuthController {
             return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(location)).build();
         }
     }
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
 
     private ResponseEntity<ApiResponse<AuthResponse>> withSessionCookies(
             ResponseEntity<ApiResponse<AuthResponse>> response, AuthResponse auth) {

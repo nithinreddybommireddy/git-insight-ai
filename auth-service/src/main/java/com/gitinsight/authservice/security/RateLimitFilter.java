@@ -14,8 +14,10 @@ import java.io.IOException;
 
 /**
  * Fixed-window rate limiter for the credential endpoints
- * ({@code /api/auth/login}, {@code /api/auth/register}) to blunt brute-force
- * password guessing and mass account creation. Counting is delegated to
+ * ({@code /api/auth/login}, {@code /api/auth/register},
+ * {@code /api/auth/forgot-password}, {@code /api/auth/reset-password})
+ * to blunt brute-force password guessing, mass account creation, and
+ * email-abuse via password reset requests. Counting is delegated to
  * {@link FixedWindowRateLimiter} — Redis in production, so windows are shared
  * across instances and survive restarts.
  *
@@ -49,7 +51,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         String uri = request.getRequestURI();
-        return !uri.endsWith("/api/auth/login") && !uri.endsWith("/api/auth/register");
+        return !uri.endsWith("/api/auth/login")
+                && !uri.endsWith("/api/auth/register")
+                && !uri.endsWith("/api/auth/forgot-password")
+                && !uri.endsWith("/api/auth/reset-password");
     }
 
     @Override
