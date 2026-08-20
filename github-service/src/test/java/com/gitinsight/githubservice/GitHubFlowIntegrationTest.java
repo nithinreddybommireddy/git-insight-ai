@@ -12,6 +12,7 @@ import com.gitinsight.githubservice.repository.ScoreHistoryRepository;
 import com.gitinsight.githubservice.service.CommitDiffService;
 import com.gitinsight.githubservice.service.CommitQualityService;
 import com.gitinsight.githubservice.service.GeminiService;
+import com.gitinsight.githubservice.service.GitHubCacheService;
 import com.gitinsight.githubservice.service.GitHubIntegrationService;
 import com.gitinsight.githubservice.service.GitHubService;
 import com.gitinsight.githubservice.service.OrganizationAnalyticsService;
@@ -83,9 +84,15 @@ class GitHubFlowIntegrationTest {
     @MockitoBean
     private CommitDiffService commitDiffService;
 
+    @Autowired
+    private GitHubCacheService cacheService;
+
     @BeforeEach
-    void resetDb() {
+    void resetDbAndCache() {
         scoreHistoryRepository.deleteAll();
+        // Evict all cached scores so tests never hit a stale cache entry
+        // from a previous test in the same shared Spring context.
+        cacheService.evictByPrefix("score:");
     }
 
     // ── Fixtures ──

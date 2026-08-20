@@ -45,6 +45,13 @@ class GatewayFilterTests {
         };
     }
 
+    /** Build a MockServerHttpRequest with a raw Cookie header string (browser-style). */
+    private static MockServerHttpRequest rawCookieRequest(String path, String cookieHeaderValue) {
+        return MockServerHttpRequest.get(path)
+                .header("Cookie", cookieHeaderValue)
+                .build();
+    }
+
     // ════════════════════════════════════════════════════════════════
     // JwtAuthenticationFilter tests
     // ════════════════════════════════════════════════════════════════
@@ -276,26 +283,25 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // CookieForwardingFilter tests
+    // CookieForwardingFilter tests — use raw Cookie headers (browser-style)
     // ════════════════════════════════════════════════════════════════
 
     @Test
     void cookieFilter_authRoute_forwardsAllCookies() {
-        MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/auth/refresh")
-                .cookie(new HttpCookie(AuthCookieNames.ACCESS, "access-token"))
-                .cookie(new HttpCookie(AuthCookieNames.REFRESH, "refresh-token"))
-                .cookie(new HttpCookie("XSRF-TOKEN", "csrf-value"))
-                .build();
+        MockServerHttpRequest request = rawCookieRequest(
+                "/api/auth/refresh",
+                AuthCookieNames.ACCESS + "=access-token; " +
+                AuthCookieNames.REFRESH + "=refresh-token; XSRF-TOKEN=csrf-value");
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
 
         GatewayFilterChain captureChain = ex -> {
             ServerHttpRequest mutated = ex.getRequest();
-            MultiValueMap<String, HttpCookie> cookies = mutated.getCookies();
-            assertEquals(3, cookies.size());
-            assertTrue(cookies.containsKey(AuthCookieNames.ACCESS));
-            assertTrue(cookies.containsKey(AuthCookieNames.REFRESH));
-            assertTrue(cookies.containsKey("XSRF-TOKEN"));
+            // Auth routes: all cookies forwarded unchanged
+            String cookieHeader = mutated.getHeaders().getFirst("Cookie");
+            assertNotNull(cookieHeader);
+            assertTrue(cookieHeader.contains(AuthCookieNames.ACCESS));
+            assertTrue(cookieHeader.contains(AuthCookieNames.REFRESH));
+            assertTrue(cookieHeader.contains("XSRF-TOKEN"));
             ex.getResponse().setStatusCode(HttpStatus.OK);
             return Mono.empty();
         };
@@ -306,12 +312,10 @@ class GatewayFilterTests {
 
     @Test
     void cookieFilter_nonAuthRoute_removesRefreshCookie() {
-        MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/github/profile/torvalds")
-                .cookie(new HttpCookie(AuthCookieNames.ACCESS, "access-token"))
-                .cookie(new HttpCookie(AuthCookieNames.REFRESH, "refresh-token"))
-                .cookie(new HttpCookie("XSRF-TOKEN", "csrf-value"))
-                .build();
+        MockServerHttpRequest request = rawCookieRequest(
+                "/api/github/profile/torvalds",
+                AuthCookieNames.ACCESS + "=access-token; " +
+                AuthCookieNames.REFRESH + "=refresh-token; XSRF-TOKEN=csrf-value");
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
 
         GatewayFilterChain captureChain = ex -> {
@@ -349,14 +353,34 @@ class GatewayFilterTests {
 
     @Test
     void cookieFilter_nonAuthRoute_onlyRefreshCookie_removesCookieHeader() {
-        MockServerHttpRequest request = MockServerHttpRequest
-                .get("/api/github/profile/torvalds")
-                .cookie(new HttpCookie(AuthCookieNames.REFRESH, "refresh-token"))
-                .build();
+        MockServerHttpRequest request = rawCookieRequest(
+                "/api/github/profile/torvalds",
+                AuthCookieNames.REFRESH + "=refresh-token");
         MockServerWebExchange exchange = MockServerWebExchange.from(request);
 
         GatewayFilterChain captureChain = ex -> {
+            // Only cookie was the refresh token — Cookie header should be removed
             assertNull(ex.getRequest().getHeaders().getFirst("Cookie"));
+            ex.getResponse().setStatusCode(HttpStatus.OK);
+            return Mono.empty();
+        };
+
+        StepVerifier.create(cookieFilter.filter(exchange, captureChain))
+                .verifyComplete();
+    }
+
+    @Test
+    void cookieFilter_nonAuthRoute_accessOnly_passesThrough() {
+        MockServerHttpRequest request = rawCookieRequest(
+                "/api/github/profile/torvalds",
+                AuthCookieNames.ACCESS + "=access-token");
+        MockServerWebExchange exchange = MockServerWebExchange.from(request);
+
+        GatewayFilterChain captureChain = ex -> {
+            String cookieHeader = ex.getRequest().getHeaders().getFirst("Cookie");
+            assertNotNull(cookieHeader);
+            assertTrue(cookieHeader.contains(AuthCookieNames.ACCESS));
+            assertFalse(cookieHeader.contains(AuthCookieNames.REFRESH));
             ex.getResponse().setStatusCode(HttpStatus.OK);
             return Mono.empty();
         };

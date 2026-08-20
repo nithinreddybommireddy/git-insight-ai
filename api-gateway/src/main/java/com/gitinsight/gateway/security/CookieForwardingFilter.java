@@ -6,29 +6,21 @@ import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
-import org.springframework.http.HttpCookie;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.util.ArrayList;
-import java.util.List;
-
 /**
- * Global filter that selectively controls cookie forwarding to downstream services.
+ * Global filter that selectively removes the refresh-token cookie for non-auth
+ * downstream services.
  *
  * <p>Spring Cloud Gateway (reactive Netty) preserves the browser's Cookie header
- * by default. However, for security we must NOT forward the refresh token cookie
- * to non-auth downstream services — the refresh token should only be readable
- * by auth-service (for {@code /api/auth/refresh}).
+ * by default, so no reconstruction is needed. This filter only strips the
+ * {@code gitinsight_refresh_token} cookie from the raw header string for routes
+ * outside {@code /api/auth/**}, keeping the refresh token scoped to auth-service.
  *
- * <p>This filter:
- * <ul>
- *   <li>On auth routes ({@code /api/auth/**}): forwards all cookies unchanged.</li>
- *   <li>On non-auth routes: rebuilds the Cookie header excluding the refresh token
- *       cookie, preventing accidental exposure to GitHub Service, Analytics, etc.</li>
- * </ul>
+ * <p>On auth routes the raw Cookie header is forwarded unchanged.
  */
 @Component
 public class CookieForwardingFilter implements GlobalFilter, Ordered {
@@ -47,41 +39,35 @@ public class CookieForwardingFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        // Non-auth routes: check if the refresh token cookie is present and remove it.
-        String refreshCookieName = AuthCookieNames.REFRESH;
-        List<HttpCookie> allCookies = request.getCookies().values().stream()
-                .flatMap(List::stream)
-                .toList();
-
-        boolean hasRefreshCookie = allCookies.stream()
-                .anyMatch(c -> refreshCookieName.equals(c.getName()));
-
-        if (!hasRefreshCookie) {
-            // No refresh cookie present — nothing to do.
+        // Non-auth routes: strip the refresh token cookie from the raw header.
+        String cookieHeader = request.getHeaders().getFirst("Cookie");
+        if (cookieHeader == null || cookieHeader.isEmpty()) {
             return chain.filter(exchange);
         }
 
-        // Rebuild the Cookie header excluding the refresh token.
-        List<String> cookieParts = new ArrayList<>();
-        for (HttpCookie cookie : allCookies) {
-            if (!refreshCookieName.equals(cookie.getName()) && cookie.getValue() != null) {
-                cookieParts.add(cookie.getName() + "=" + cookie.getValue());
-            }
+        String refreshName = AuthCookieNames.REFRESH;
+
+        // Quick check: does the header contain the refresh cookie at all?
+        if (!containsCookieName(cookieHeader, refreshName)) {
+            return chain.filter(exchange);
         }
 
+        // Remove the refresh cookie from the raw header string, preserving
+        // all other cookies exactly as the browser sent them (including
+        // encoded values, duplicates, etc.).
+        String filtered = removeCookieByName(cookieHeader, refreshName);
+
         ServerHttpRequest mutatedRequest;
-        if (!cookieParts.isEmpty()) {
-            String cookieHeader = String.join("; ", cookieParts);
+        if (filtered.isEmpty()) {
             mutatedRequest = request.mutate()
-                    .headers(headers -> {
-                        headers.remove("Cookie");
-                        headers.add("Cookie", cookieHeader);
-                    })
+                    .headers(h -> h.remove("Cookie"))
                     .build();
         } else {
-            // All cookies were the refresh token — remove the Cookie header entirely.
             mutatedRequest = request.mutate()
-                    .headers(headers -> headers.remove("Cookie"))
+                    .headers(h -> {
+                        h.remove("Cookie");
+                        h.add("Cookie", filtered);
+                    })
                     .build();
         }
 
@@ -93,5 +79,71 @@ public class CookieForwardingFilter implements GlobalFilter, Ordered {
     public int getOrder() {
         // Run before the JWT filter so cookies are correctly scoped
         return Ordered.HIGHEST_PRECEDENCE + 5;
+    }
+
+    // ── Raw cookie header manipulation ────────────────────────────
+
+    /**
+     * Check whether the raw Cookie header contains a cookie with the given name.
+     * Handles both {@code name=value} and {@code name=; ...} patterns.
+     */
+    private static boolean containsCookieName(String header, String name) {
+        // Match: "name=" at start, after "; ", or after ";"
+        String needle = name + "=";
+        int idx = header.indexOf(needle);
+        if (idx < 0) return false;
+
+        // Verify it's a full name match (not e.g. "foo_refresh_token=" matching "refresh_token=")
+        if (idx > 0) {
+            char before = header.charAt(idx - 1);
+            if (before != ' ' && before != ';') {
+                // Not a boundary — check further occurrences
+                return containsCookieName(header.substring(idx + needle.length()), name);
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Remove all occurrences of a cookie with the given name from the raw header,
+     * preserving the rest of the string exactly.
+     *
+     * <p>A cookie entry is defined as starting at a name boundary (start of string,
+     * after "; " or after ";") and ending at the next ";" or end of string. Any
+     * leading space after the removed semicolon is also consumed.
+     */
+    private static String removeCookieByName(String header, String name) {
+        String needle = name + "=";
+        StringBuilder result = new StringBuilder(header);
+
+        int searchFrom = 0;
+        while (searchFrom < result.length()) {
+            int idx = result.indexOf(needle, searchFrom);
+            if (idx < 0) break;
+
+            // Verify boundary: character before must be start-of-string, ';', or ' '
+            if (idx > 0) {
+                char before = result.charAt(idx - 1);
+                if (before != ' ' && before != ';') {
+                    searchFrom = idx + needle.length();
+                    continue;
+                }
+            }
+
+            // Find the end of this cookie entry (next ';' or end of string)
+            int start = (idx > 0 && result.charAt(idx - 1) == ' ') ? idx - 1 : idx;
+            int end = result.indexOf(";", idx + needle.length());
+            if (end < 0) {
+                // Last cookie in the header — remove from start to end
+                result.delete(start, result.length());
+                break;
+            } else {
+                // Remove including the trailing ';'
+                result.delete(start, end + 1);
+                // Don't advance searchFrom — the string shifted
+            }
+        }
+
+        return result.toString().trim();
     }
 }

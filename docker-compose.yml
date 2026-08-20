@@ -130,6 +130,9 @@ services:
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8080/api/auth/oauth/github/callback}
       OAUTH_FRONTEND_REDIRECT_URI: ${OAUTH_FRONTEND_REDIRECT_URI:-http://localhost:5173/auth/callback}
+      # Cookie security: set AUTH_COOKIE_SECURE=true + AUTH_COOKIE_SAME_SITE=None in production
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
     ports:
       - "8083:8083"
     depends_on:

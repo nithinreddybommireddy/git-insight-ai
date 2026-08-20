@@ -59,7 +59,6 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/auth/refresh",
             "/api/auth/logout",
             "/api/auth/oauth",
-            "/api/health",
             "/actuator"
     );
 
