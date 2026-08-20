@@ -15,10 +15,10 @@ import org.springframework.stereotype.Component;
  * token's lifetime, the refresh cookie for the refresh token's lifetime, and
  * both are scoped to the site root.
  *
- * <p>Production (Vercel frontend + Railway gateway on different origins) requires
- * {@code SameSite=None} + {@code Secure} so the browser sends cookies on
- * cross-origin XHR/fetch requests. Local development uses {@code SameSite=Lax}
- * because everything runs on the same origin.
+ * <p>Vercel's /api rewrite proxy makes the browser see frontend and API as the
+ * same origin, so {@code SameSite=Lax} works for both local and production.
+ * Only set {@code SameSite=None} if frontend and API are genuinely cross-origin
+ * (no Vercel proxy).
  *
  * <p>Set {@code AUTH_COOKIE_SECURE=true} in production to enable the
  * {@code Secure} flag on all cookies.

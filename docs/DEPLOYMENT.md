@@ -113,37 +113,60 @@ CORS_ALLOWED_ORIGINS=https://git-insight-ai-one.vercel.app
 
 **Auth Service:**
 ```
-JWT_SECRET=<64+ random bytes>
-SPRING_DATASOURCE_URL=<Railway PostgreSQL URL>
-SPRING_DATASOURCE_USERNAME=<db user>
-SPRING_DATASOURCE_PASSWORD=<db password>
-REDIS_HOST=redis.railway.internal
-REDIS_PORT=<Railway Redis port>
-REDIS_PASSWORD=<Railway Redis password>
-EUREKA_URL=http://eureka-server.railway.internal:8761/eureka/
+JWT_SECRET=<64+ random bytes — generate with: openssl rand -hex 32>
+
+# PostgreSQL — copy the JDBC URL from Railway's Postgres service Variables tab.
+# Do NOT pass Railway's raw DATABASE_URL directly — it uses postgres:// not jdbc:postgresql://
+SPRING_DATASOURCE_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+SPRING_DATASOURCE_USERNAME=${{Postgres.PGUSER}}
+SPRING_DATASOURCE_PASSWORD=${{Postgres.PGPASSWORD}}
+
+# Redis — copy from Railway's Redis service Variables tab.
+REDIS_HOST=${{Redis.REDIS_PRIVATE_URL}}
+REDIS_PORT=6379
+REDIS_PASSWORD=${{Redis.REDIS_PASSWORD}}
+
+# Eureka — copy the actual Private Domain from the Eureka service's Settings tab.
+EUREKA_URL=http://<eureka-actual-private-domain>:8761/eureka/
+
+# GitHub OAuth — callback goes through Vercel proxy (same-origin from browser).
 GITHUB_CLIENT_ID=<OAuth client ID>
 GITHUB_CLIENT_SECRET=<OAuth client secret>
 GITHUB_OAUTH_REDIRECT_URI=https://git-insight-ai-one.vercel.app/api/auth/oauth/github/callback
 OAUTH_FRONTEND_REDIRECT_URI=https://git-insight-ai-one.vercel.app/auth/callback
-GITHUB_SERVICE_URL=http://github-service.railway.internal:8081
-INTERNAL_API_KEY=<shared secret>
+
+# Internal service-to-service — copy the actual Private Domain from github-service.
+GITHUB_SERVICE_URL=http://<github-service-actual-private-domain>:8081
+INTERNAL_API_KEY=<shared secret — same value on both auth and github service>
+
+# Cookie security — Vercel /api proxy makes this same-origin.
 AUTH_COOKIE_SECURE=true
-AUTH_COOKIE_SAME_SITE=None
+AUTH_COOKIE_SAME_SITE=Lax
 JWT_MIN_SECRET_BYTES=64
 ```
 
 **GitHub Service:**
 ```
-JWT_SECRET=<same as auth-service>
-SPRING_DATASOURCE_URL=<Railway PostgreSQL URL>
-SPRING_DATASOURCE_USERNAME=<db user>
-SPRING_DATASOURCE_PASSWORD=<db password>
-REDIS_HOST=redis.railway.internal
-REDIS_PORT=<Railway Redis port>
-REDIS_PASSWORD=<Railway Redis password>
-EUREKA_URL=http://eureka-server.railway.internal:8761/eureka/
+JWT_SECRET=<same as auth-service — 64+ random bytes>
+
+# PostgreSQL — each service needs its own database.
+SPRING_DATASOURCE_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+SPRING_DATASOURCE_USERNAME=${{Postgres.PGUSER}}
+SPRING_DATASOURCE_PASSWORD=${{Postgres.PGPASSWORD}}
+
+# Redis
+REDIS_HOST=${{Redis.REDIS_PRIVATE_URL}}
+REDIS_PORT=6379
+REDIS_PASSWORD=${{Redis.REDIS_PASSWORD}}
+
+# Eureka — copy the actual Private Domain from the Eureka service.
+EUREKA_URL=http://<eureka-actual-private-domain>:8761/eureka/
+
+# External API keys
 GITHUB_TOKEN=<GitHub PAT>
 GEMINI_API_KEY=<Gemini API key>
+
+# Internal — must match auth-service.
 INTERNAL_API_KEY=<same as auth-service>
 JWT_MIN_SECRET_BYTES=64
 ```
@@ -164,9 +187,13 @@ Auth Service sets HttpOnly cookies and redirects to `/auth/callback`.
   from the browser's perspective. No cross-origin cookie issues.
 - `AUTH_COOKIE_SECURE=true` is required because Vercel serves over HTTPS.
 - `AUTH_COOKIE_SAME_SITE=Lax` works with same-origin proxy (recommended).
-  Set `None` only if you need cross-origin fallback.
-- Internal services (auth, github) must NOT have public Railway domains.
-  Only the API Gateway is public.
+  Only set `None` if frontend and API are genuinely cross-origin (no Vercel proxy).
+- **Only the API Gateway should have a public Railway domain.**
+  All other services (auth, github, analytics, eureka, postgres, redis) must
+  remain private — accessible only via Railway private networking.
+- When setting `EUREKA_URL`, `GITHUB_SERVICE_URL`, etc., copy the actual
+  Private Domain from each service's Railway Settings tab — the hostnames
+  are generated and may not match the service name exactly.
 
 ## Option C — Freebuff hosting (frontend only)
 

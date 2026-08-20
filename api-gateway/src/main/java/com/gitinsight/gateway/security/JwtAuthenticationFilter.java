@@ -25,21 +25,18 @@ import java.util.Set;
  *
  * <p>Security flow:
  * <ol>
- *   <li>Strip ALL spoofable identity headers from the client request immediately.
- *       This prevents header injection even on public routes.</li>
- *   <li>If the path is public, forward the stripped request without JWT validation.</li>
+ *   <li>Strip ALL spoofable identity headers from the client request immediately.</li>
+ *   <li>If the path is public, forward without JWT validation.</li>
  *   <li>For protected paths, extract and validate the JWT.</li>
- *   <li>Safely validate claims (subject must be numeric, role must be valid,
- *       token type must be "access").</li>
- *   <li>For role-protected paths ({@code /api/recruiter/**}, {@code /api/admin/**}),
- *       enforce the required role.</li>
+ *   <li>Safely validate claims.</li>
+ *   <li>Enforce role-based authorization for recruiter/admin paths.</li>
  *   <li>Add JWT-derived trusted identity headers before forwarding.</li>
  * </ol>
  *
- * <p>Token sources (in priority order):
+ * <p>Token sources:
  * <ol>
- *   <li>{@code Authorization: Bearer <token>} header (API clients)</li>
- *   <li>{@code gitinsight_access_token} HttpOnly cookie (browser sessions)</li>
+ *   <li>{@code Authorization: Bearer <token>} header</li>
+ *   <li>{@code gitinsight_access_token} HttpOnly cookie</li>
  * </ol>
  */
 @Component
@@ -47,25 +44,14 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
-    /** Headers the gateway derives from JWT — strip any client-supplied values first. */
     private static final List<String> TRUSTED_HEADERS = List.of(
-            "X-User-Id",
-            "X-User-Email",
-            "X-User-Role",
-            "X-Token-Type"
+            "X-User-Id", "X-User-Email", "X-User-Role", "X-Token-Type"
     );
 
     /**
-     * Public route prefixes. Each entry must end with "/" or be a complete path
-     * segment to prevent prefix confusion (e.g. "/api/auth/me" must NOT match
-     * "/api/auth/logout").
-     *
-     * <p>The matching uses {@code path.startsWith(prefix)} so:
-     * <ul>
-     *   <li>{@code /api/auth/login} matches prefix {@code /api/auth/login}</li>
-     *   <li>{@code /api/auth/login/foo} also matches (explicitly intentional for OAuth sub-paths)</li>
-     *   <li>{@code /api/auth/me} does NOT match any of the login/register/refresh/logout prefixes</li>
-     * </ul>
+     * Public route prefixes. Matching uses exact-segment logic:
+     * {@code path.equals(prefix) || path.startsWith(prefix + "/")}
+     * so that {@code /api/githubFake} does NOT match prefix {@code /api/github}.
      */
     private static final Set<String> PUBLIC_PREFIXES = Set.of(
             "/api/auth/register",
@@ -73,18 +59,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/api/auth/refresh",
             "/api/auth/logout",
             "/api/auth/oauth",
-            "/api/github",          // public GitHub analysis (search results, org analytics, dev score)
-            "/api/ai",              // public AI status
+            "/api/github",
+            "/api/ai",
             "/actuator"
     );
 
-    /** Paths that require the RECRUITER or ADMIN role. */
     private static final String RECRUITER_PREFIX = "/api/recruiter/";
-
-    /** Paths that require the ADMIN role. */
     private static final String ADMIN_PREFIX = "/api/admin/";
-
-    /** Valid roles accepted from JWT claims. */
     private static final Set<String> VALID_ROLES = Set.of("USER", "RECRUITER", "ADMIN");
 
     private final JwtUtil jwtUtil;
@@ -98,34 +79,28 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         ServerHttpRequest request = exchange.getRequest();
         String path = request.getURI().getPath();
 
-        // Step 1: ALWAYS strip spoofable identity headers, even on public routes.
+        // Step 1: Strip spoofable identity headers on ALL routes.
         ServerHttpRequest strippedRequest = request.mutate()
-                .headers(headers -> {
-                    for (String header : TRUSTED_HEADERS) {
-                        headers.remove(header);
-                    }
-                })
+                .headers(h -> TRUSTED_HEADERS.forEach(h::remove))
                 .build();
 
-        // Step 2: Public routes — forward the stripped request without JWT validation.
+        // Step 2: Public routes — forward without JWT.
         if (isPublicRoute(path)) {
             return chain.filter(exchange.mutate().request(strippedRequest).build());
         }
 
-        // Step 3: Extract token from Authorization header or cookie.
+        // Step 3: Extract token.
         String token = extractToken(strippedRequest);
         if (token == null) {
-            log.debug("No JWT token for protected path: {}", path);
             return unauthorized(exchange, "Authentication required");
         }
 
-        // Step 4: Validate token signature and expiry.
+        // Step 4: Validate token.
         if (!jwtUtil.validateToken(token)) {
-            log.debug("Invalid JWT for path: {}", path);
             return unauthorized(exchange, "Invalid or expired token");
         }
 
-        // Step 5: Safely extract and validate claims.
+        // Step 5: Validate claims.
         String tokenType;
         String role;
         Long userId;
@@ -140,35 +115,25 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return unauthorized(exchange, "Invalid token claims");
         }
 
-        // Token type must be "access" — refresh tokens cannot authorize API requests.
         if (!JwtUtil.TOKEN_TYPE_ACCESS.equals(tokenType)) {
-            log.debug("Non-access token rejected for path: {}", path);
             return unauthorized(exchange, "Invalid token type");
         }
-
-        // Subject must be a valid numeric user ID.
         if (userId == null || userId <= 0) {
-            log.warn("Invalid subject in JWT for path: {}", path);
             return unauthorized(exchange, "Invalid token claims");
         }
-
-        // Role must exist and be a known role.
         if (role == null || !VALID_ROLES.contains(role)) {
-            log.warn("Invalid or missing role in JWT for path: {}", path);
             return unauthorized(exchange, "Invalid token claims");
         }
 
-        // Step 6: Enforce role-based authorization for protected paths.
+        // Step 6: Role-based authorization.
         if (isAdminPath(path) && !"ADMIN".equals(role)) {
-            log.debug("Non-ADMIN role '{}' rejected for admin path: {}", role, path);
             return forbidden(exchange, "Access denied");
         }
         if (isRecruiterPath(path) && !"RECRUITER".equals(role) && !"ADMIN".equals(role)) {
-            log.debug("Non-recruiter role '{}' rejected for recruiter path: {}", role, path);
             return forbidden(exchange, "Access denied");
         }
 
-        // Step 7: Add JWT-derived trusted identity headers.
+        // Step 7: Add trusted headers from JWT.
         ServerHttpRequest authenticatedRequest = strippedRequest.mutate()
                 .header("X-User-Id", String.valueOf(userId))
                 .header("X-User-Email", email != null ? email : "")
@@ -181,14 +146,16 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        // Run early — after CORS but before routing
         return Ordered.HIGHEST_PRECEDENCE + 10;
     }
 
-    // ── Route classification ────────────────────────────────────────
+    // ── Exact-segment public route matching ─────────────────────────
+    // Uses: path.equals(prefix) || path.startsWith(prefix + "/")
+    // This prevents /api/githubFake from matching prefix /api/github.
 
     private boolean isPublicRoute(String path) {
-        return PUBLIC_PREFIXES.stream().anyMatch(path::startsWith);
+        return PUBLIC_PREFIXES.stream().anyMatch(prefix ->
+                path.equals(prefix) || path.startsWith(prefix + "/"));
     }
 
     private boolean isRecruiterPath(String path) {
@@ -202,18 +169,14 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     // ── Token extraction ────────────────────────────────────────────
 
     private String extractToken(ServerHttpRequest request) {
-        // 1. Authorization header
         String authHeader = request.getHeaders().getFirst("Authorization");
         if (StringUtils.hasText(authHeader) && authHeader.startsWith("Bearer ")) {
             return authHeader.substring(7);
         }
-
-        // 2. HttpOnly cookie
         HttpCookie cookie = request.getCookies().getFirst(AuthCookieNames.ACCESS);
         if (cookie != null && StringUtils.hasText(cookie.getValue())) {
             return cookie.getValue();
         }
-
         return null;
     }
 

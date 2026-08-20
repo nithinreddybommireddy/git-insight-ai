@@ -3,14 +3,21 @@ package com.gitinsight.common.web;
 import jakarta.servlet.http.HttpServletRequest;
 
 /**
- * Client IP resolution that is safe against {@code X-Forwarded-For} spoofing.
+ * Client IP resolution safe against header spoofing.
  *
- * <p>The header is honored ONLY when the direct peer is a proxy this project
- * deploys behind (loopback = the Vite dev proxy; RFC1918 = the Docker nginx
- * gateway). A public peer sending a forged header is keyed by its real socket
- * address instead, so an attacker who can reach the service directly cannot
- * rotate the header to bypass IP-based rate limiting. First hop wins, matching
- * how the Vite/nginx proxies append the real client address first.
+ * <p>Header priority:
+ * <ol>
+ *   <li>{@code X-Real-IP} — set by Railway and most reverse proxies. Trusted
+ *       because Railway strips client-supplied values before setting it.</li>
+ *   <li>{@code X-Forwarded-For} — honored ONLY when the direct peer is a proxy
+ *       this project deploys behind (loopback = Vite dev proxy; RFC1918 = Docker
+ *       nginx gateway). First hop wins.</li>
+ *   <li>{@code request.getRemoteAddr()} — the raw socket address.</li>
+ * </ol>
+ *
+ * <p>A public peer sending forged {@code X-Forwarded-For} is keyed by its real
+ * socket address, so an attacker who can reach the service directly cannot rotate
+ * the header to bypass IP-based rate limiting.
  */
 public final class ClientAddress {
 
@@ -18,18 +25,31 @@ public final class ClientAddress {
     }
 
     public static String resolve(HttpServletRequest request) {
+        // 1. X-Real-IP — Railway and most CDNs set this; not spoofable by clients.
+        String realIp = request.getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+            return realIp.split(",")[0].trim();
+        }
+
+        // 2. X-Forwarded-For — only trust when the direct peer is a known proxy.
         String remoteAddr = request.getRemoteAddr();
-        String forwarded = isTrustedProxy(remoteAddr) ? request.getHeader("X-Forwarded-For") : null;
-        return (forwarded != null && !forwarded.isBlank())
-                ? forwarded.split(",")[0].trim()
-                : remoteAddr;
+        if (isTrustedProxy(remoteAddr)) {
+            String forwarded = request.getHeader("X-Forwarded-For");
+            if (forwarded != null && !forwarded.isBlank()) {
+                return forwarded.split(",")[0].trim();
+            }
+        }
+
+        // 3. Direct socket address.
+        return remoteAddr;
     }
 
     private static boolean isTrustedProxy(String remoteAddr) {
         if (remoteAddr == null) {
             return false;
         }
-        if (remoteAddr.startsWith("127.") || remoteAddr.equals("::1") || remoteAddr.equals("0:0:0:0:0:0:0:1")) {
+        if (remoteAddr.startsWith("127.") || remoteAddr.equals("::1")
+                || remoteAddr.equals("0:0:0:0:0:0:0:1")) {
             return true;
         }
         // RFC1918 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16

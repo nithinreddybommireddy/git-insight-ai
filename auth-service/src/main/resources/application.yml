@@ -63,8 +63,8 @@ app:
     # Local dev runs over http://localhost, so it defaults to false.
     cookie-secure: ${AUTH_COOKIE_SECURE:false}
     # SameSite policy: Lax for same-origin (local dev), None for cross-origin
-    # (Vercel frontend + Railway gateway). Production must set AUTH_COOKIE_SAME_SITE=None
-    # when the frontend and API are on different domains.
+    # Vercel /api proxy makes frontend and API same-origin — Lax works for same-origin.
+    # Only set None if frontend and API are genuinely cross-origin (no Vercel proxy).
     cookie-same-site: ${AUTH_COOKIE_SAME_SITE:Lax}
   jwt:
     # No fallback: the app must NOT boot with a known/committed signing key.

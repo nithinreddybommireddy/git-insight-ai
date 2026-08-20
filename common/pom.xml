@@ -15,10 +15,25 @@
     <description>Shared DTOs and utilities</description>
 
     <dependencies>
+        <!--
+            Minimal Spring Web dependencies — NOT spring-boot-starter-web.
+            The starter pulls Tomcat which conflicts with the reactive API Gateway.
+            Services that need Tomcat (auth, github, analytics) declare their own
+            spring-boot-starter-web. The Gateway (reactive/Netty) does NOT.
+        -->
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-web</artifactId>
         </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-webmvc</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-context</artifactId>
+        </dependency>
+
         <!-- Spring Security primitives used by the shared JWT filter. Services
              already ship spring-boot-starter-security; keeping the core/web
              deps here lets common compile OncePerRequestFilter + the security
@@ -30,6 +45,19 @@
         <dependency>
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-web</artifactId>
+        </dependency>
+
+        <!-- Servlet API — compile-only (provided at runtime by Tomcat/Undertow) -->
+        <dependency>
+            <groupId>jakarta.servlet</groupId>
+            <artifactId>jakarta.servlet-api</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- Validation support for @Valid / @Validated in common DTOs -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
         </dependency>
 
         <!-- JWT — shared signing/validation used by auth-service (mints) and

@@ -385,9 +385,9 @@ GitInsight AI follows a **Spring Cloud Microservices Architecture**.
 | `api-gateway` | 8080 | JWT validation, CORS, routing, role-based authorization |
 
 > **Production note:** In production (e.g. Vercel frontend + Railway gateway on different origins),
-> set `AUTH_COOKIE_SECURE=true` and `AUTH_COOKIE_SAME_SITE=None` so HttpOnly cookies work
-> cross-site. For the most reliable cookie behavior, consider using custom subdomains
-> (e.g. `app.example.com` + `api.example.com`). |
+> `AUTH_COOKIE_SECURE=true` is required for HTTPS. `AUTH_COOKIE_SAME_SITE=Lax` works
+> because the Vercel /api rewrite makes frontend and API same-origin from the browser's
+> perspective. No cross-origin cookie workarounds needed. |
 | `eureka-server` | 8761 | Service discovery |
 | `github-service` | 8081 | GitHub integration, scoring, AI, reports |
 | `analytics-service` | 8082 | Analytics (placeholder — currently only exposes health; not yet implemented) |

@@ -150,8 +150,28 @@ class GatewayFilterTests {
         }
 
         @Test void authMe_protectedNotPublic() {
-            // /api/auth/me must NOT match any public prefix
             MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/auth/me").build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
+        }
+
+        // ── Exact-segment boundary tests ─────────────────────────────
+        // Proves /api/githubFake does NOT match prefix /api/github
+
+        @Test void githubFake_notPublic() {
+            MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/githubFake").build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
+        }
+
+        @Test void authLoginFake_notPublic() {
+            MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/auth/loginFake").build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
+        }
+
+        @Test void aifake_notPublic() {
+            MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/aifake").build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
         }
