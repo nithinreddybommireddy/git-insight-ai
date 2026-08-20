@@ -105,4 +105,4 @@ app:
 logging:
   level:
     org.springframework.cloud.gateway: INFO
-    com.gitinsight.gateway: DEBUG
+    com.gitinsight.gateway: INFO

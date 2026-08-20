@@ -95,4 +95,5 @@ app:
   github-service-url: ${GITHUB_SERVICE_URL:http://localhost:8081}
 logging:
   level:
-    org.springframework.security: DEBUG
+    org.springframework.security: INFO
+    com.gitinsight.authservice: INFO

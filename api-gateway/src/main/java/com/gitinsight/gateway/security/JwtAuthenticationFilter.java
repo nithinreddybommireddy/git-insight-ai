@@ -17,6 +17,7 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Global gateway filter that validates JWT tokens and enforces role-based
@@ -28,6 +29,8 @@ import java.util.List;
  *       This prevents header injection even on public routes.</li>
  *   <li>If the path is public, forward the stripped request without JWT validation.</li>
  *   <li>For protected paths, extract and validate the JWT.</li>
+ *   <li>Safely validate claims (subject must be numeric, role must be valid,
+ *       token type must be "access").</li>
  *   <li>For role-protected paths ({@code /api/recruiter/**}, {@code /api/admin/**}),
  *       enforce the required role.</li>
  *   <li>Add JWT-derived trusted identity headers before forwarding.</li>
@@ -52,25 +55,37 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "X-Token-Type"
     );
 
-    /** Paths that are always public — no JWT required. */
-    private static final List<String> PUBLIC_PREFIXES = List.of(
+    /**
+     * Public route prefixes. Each entry must end with "/" or be a complete path
+     * segment to prevent prefix confusion (e.g. "/api/auth/me" must NOT match
+     * "/api/auth/logout").
+     *
+     * <p>The matching uses {@code path.startsWith(prefix)} so:
+     * <ul>
+     *   <li>{@code /api/auth/login} matches prefix {@code /api/auth/login}</li>
+     *   <li>{@code /api/auth/login/foo} also matches (explicitly intentional for OAuth sub-paths)</li>
+     *   <li>{@code /api/auth/me} does NOT match any of the login/register/refresh/logout prefixes</li>
+     * </ul>
+     */
+    private static final Set<String> PUBLIC_PREFIXES = Set.of(
             "/api/auth/register",
             "/api/auth/login",
             "/api/auth/refresh",
             "/api/auth/logout",
             "/api/auth/oauth",
+            "/api/github",          // public GitHub analysis (search results, org analytics, dev score)
+            "/api/ai",              // public AI status
             "/actuator"
     );
 
     /** Paths that require the RECRUITER or ADMIN role. */
-    private static final List<String> RECRUITER_PREFIXES = List.of(
-            "/api/recruiter/"
-    );
+    private static final String RECRUITER_PREFIX = "/api/recruiter/";
 
     /** Paths that require the ADMIN role. */
-    private static final List<String> ADMIN_PREFIXES = List.of(
-            "/api/admin/"
-    );
+    private static final String ADMIN_PREFIX = "/api/admin/";
+
+    /** Valid roles accepted from JWT claims. */
+    private static final Set<String> VALID_ROLES = Set.of("USER", "RECRUITER", "ADMIN");
 
     private final JwtUtil jwtUtil;
 
@@ -84,7 +99,6 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         String path = request.getURI().getPath();
 
         // Step 1: ALWAYS strip spoofable identity headers, even on public routes.
-        // A malicious client should never be able to inject X-User-Role: ADMIN.
         ServerHttpRequest strippedRequest = request.mutate()
                 .headers(headers -> {
                     for (String header : TRUSTED_HEADERS) {
@@ -111,15 +125,40 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             return unauthorized(exchange, "Invalid or expired token");
         }
 
-        // Step 5: Check token type — only access tokens authorize API requests.
-        String tokenType = jwtUtil.getTokenType(token);
+        // Step 5: Safely extract and validate claims.
+        String tokenType;
+        String role;
+        Long userId;
+        String email;
+        try {
+            tokenType = jwtUtil.getTokenType(token);
+            role = jwtUtil.getRoleFromToken(token);
+            userId = jwtUtil.getUserIdFromToken(token);
+            email = jwtUtil.getEmailFromToken(token);
+        } catch (Exception e) {
+            log.warn("Malformed JWT claims for path {}: {}", path, e.getMessage());
+            return unauthorized(exchange, "Invalid token claims");
+        }
+
+        // Token type must be "access" — refresh tokens cannot authorize API requests.
         if (!JwtUtil.TOKEN_TYPE_ACCESS.equals(tokenType)) {
             log.debug("Non-access token rejected for path: {}", path);
             return unauthorized(exchange, "Invalid token type");
         }
 
-        // Step 6: Extract role and enforce path-based authorization.
-        String role = jwtUtil.getRoleFromToken(token);
+        // Subject must be a valid numeric user ID.
+        if (userId == null || userId <= 0) {
+            log.warn("Invalid subject in JWT for path: {}", path);
+            return unauthorized(exchange, "Invalid token claims");
+        }
+
+        // Role must exist and be a known role.
+        if (role == null || !VALID_ROLES.contains(role)) {
+            log.warn("Invalid or missing role in JWT for path: {}", path);
+            return unauthorized(exchange, "Invalid token claims");
+        }
+
+        // Step 6: Enforce role-based authorization for protected paths.
         if (isAdminPath(path) && !"ADMIN".equals(role)) {
             log.debug("Non-ADMIN role '{}' rejected for admin path: {}", role, path);
             return forbidden(exchange, "Access denied");
@@ -130,13 +169,10 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         }
 
         // Step 7: Add JWT-derived trusted identity headers.
-        Long userId = jwtUtil.getUserIdFromToken(token);
-        String email = jwtUtil.getEmailFromToken(token);
-
         ServerHttpRequest authenticatedRequest = strippedRequest.mutate()
                 .header("X-User-Id", String.valueOf(userId))
                 .header("X-User-Email", email != null ? email : "")
-                .header("X-User-Role", role != null ? role : "")
+                .header("X-User-Role", role)
                 .header("X-Token-Type", tokenType)
                 .build();
 
@@ -156,11 +192,11 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
     }
 
     private boolean isRecruiterPath(String path) {
-        return RECRUITER_PREFIXES.stream().anyMatch(path::startsWith);
+        return path.startsWith(RECRUITER_PREFIX);
     }
 
     private boolean isAdminPath(String path) {
-        return ADMIN_PREFIXES.stream().anyMatch(path::startsWith);
+        return path.startsWith(ADMIN_PREFIX);
     }
 
     // ── Token extraction ────────────────────────────────────────────

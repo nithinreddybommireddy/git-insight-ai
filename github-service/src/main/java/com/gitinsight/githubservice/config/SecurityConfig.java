@@ -2,7 +2,6 @@ package com.gitinsight.githubservice.config;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.dto.response.ApiResponse;
-import com.gitinsight.common.security.CsrfCookieFilter;
 import com.gitinsight.common.security.JwtAuthFilter;
 import com.gitinsight.githubservice.security.AiRateLimitFilter;
 import com.gitinsight.githubservice.security.GitHubRateLimitFilter;
@@ -17,8 +16,7 @@ import org.springframework.security.config.annotation.web.configuration.EnableWe
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
-import org.springframework.security.web.csrf.CookieCsrfTokenRepository;
-import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
+
 
 /**
  * Security configuration for github-service.
@@ -31,9 +29,9 @@ import org.springframework.security.web.csrf.CsrfTokenRequestAttributeHandler;
  *
  * <p>The internal job-match endpoint is protected by InternalApiKeyFilter.
  *
- * <p>CSRF uses the same XSRF-TOKEN / X-XSRF-TOKEN names as auth-service so
- * the frontend's single axios instance can read the cookie and send the header
- * for all requests regardless of which backend handles them.
+ * <p>CSRF is disabled here because the Gateway's Vercel same-origin proxy
+ * handles CSRF centrally. Having two downstream CookieCsrfTokenRepository
+ * instances would overwrite each other's XSRF-TOKEN cookies.
  */
 @Configuration
 @EnableWebSecurity
@@ -76,18 +74,7 @@ public class SecurityConfig {
                  * Uses the same XSRF-TOKEN / X-XSRF-TOKEN names as
                  * auth-service so a single frontend axios instance works.
                  */
-                .csrf(csrf -> csrf
-                        .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())
-                        .csrfTokenRequestHandler(
-                                new CsrfTokenRequestAttributeHandler()
-                        )
-                        .ignoringRequestMatchers(
-                                "/api/github/**",
-                                "/api/ai/job-match",
-                                "/api/health",
-                                "/actuator/health"
-                        )
-                )
+                .csrf(csrf -> csrf.disable())
 
                 /*
                  * CORS
@@ -170,19 +157,13 @@ public class SecurityConfig {
                 .addFilterBefore(
                         jwtAuthFilter,
                         UsernamePasswordAuthenticationFilter.class
-                )
-
-                /*
-                 * CSRF cookie generation
-                 *
-                 * CsrfFilter creates/loads the deferred CSRF token.
-                 * This filter accesses it and therefore causes the
-                 * CookieCsrfTokenRepository to send the XSRF-TOKEN cookie.
-                 */
-                .addFilterAfter(
-                        new CsrfCookieFilter(),
-                        org.springframework.security.web.csrf.CsrfFilter.class
                 );
+
+        // CSRF cookie generation is intentionally omitted here.
+        // The Gateway's Vercel same-origin proxy handles CSRF centrally.
+        // Keeping CookieCsrfTokenRepository + CsrfCookieFilter would
+        // overwrite the auth-service's XSRF-TOKEN cookie, causing
+        // token collisions when both services share a domain.
 
         return http.build();
     }

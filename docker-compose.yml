@@ -150,8 +150,6 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
       JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:5174}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
     ports:
       - "8080:8080"
     depends_on:
@@ -170,8 +168,6 @@ services:
       - "5173:80"
     depends_on:
       - api-gateway
-      - github-service
-      - auth-service
 
 volumes:
   pgdata:

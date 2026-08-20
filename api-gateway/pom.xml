@@ -33,6 +33,13 @@
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
 
+        <!-- Caffeine cache — required by Spring Cloud LoadBalancer to avoid
+             the default ConcurrentMapCacheManager warning at startup. -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- JWT validation (shared JwtUtil from common) -->
         <dependency>
             <groupId>com.gitinsight</groupId>

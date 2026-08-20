@@ -60,25 +60,113 @@ deploy:
 # Only :443 (and optionally :80 → redirect) is reachable.
 ```
 
-## Option B — Static frontend + containerized backend (split origins)
+## Option B — Vercel frontend + Railway backend (recommended split-origin)
 
-Frontend hosting can be anything that serves static files (Netlify, Vercel,
-Cloudflare Pages, S3+CDN, or Freebuff hosting); the backend stack runs via
-Option A's compose file on a container host.
+**Architecture:** Vercel serves the React SPA and proxies `/api/*` to the
+Railway Gateway via `vercel.json` rewrites. The browser makes same-origin
+requests (`https://app.example.com/api/...`) — no cross-origin cookies, no
+CORS issues, no complex CSRF handling.
 
-1. Build the frontend with the backend origin baked in:
-   ```bash
-   cd frontend && VITE_API_BASE=https://api.example.com bun run build   # → dist/
+### Vercel setup
+
+1. `frontend/vercel.json` is pre-configured to rewrite `/api/:path*` to
+   Railway. Update the destination URL to your actual Railway Gateway domain:
+   ```json
+   {
+     "rewrites": [
+       {
+         "source": "/api/:path*",
+         "destination": "https://<your-gateway>.up.railway.app/api/:path*"
+       }
+     ]
+   }
    ```
-   (Without `VITE_API_BASE` the bundle calls same-origin `/api/...`, which only
-   works when a gateway serves both.)
-2. Backend: `docker compose up --build -d` on the API host, with the same
-   `VITE_API_BASE` origin added to CORS:
+2. Build the frontend with `VITE_API_BASE=` empty (same-origin proxy):
    ```bash
-   CORS_ALLOWED_ORIGINS=https://app.example.com docker compose up --build -d
+   cd frontend && VITE_API_BASE= npm run build   # → dist/
    ```
-3. Put a TLS termination + reverse proxy (`https://api.example.com`) in front
-   of the backend that forwards `/api` to the gateway port.
+
+### Railway setup
+
+Deploy each service as a separate Railway service. Only the API Gateway gets
+a public domain; all others use Railway private networking.
+
+**Required Railway services:**
+
+| Service | Public Domain | Private Domain |
+|---|---|---|
+| api-gateway | ✅ `https://<gateway>.up.railway.app` | `api-gateway.railway.internal` |
+| auth-service | ❌ | `auth-service.railway.internal` |
+| github-service | ❌ | `github-service.railway.internal` |
+| eureka-server | ❌ | `eureka-server.railway.internal` |
+| PostgreSQL | ❌ | *(managed Railway DB)* |
+| Redis | ❌ | *(managed Railway Redis)* |
+
+### Railway environment variables
+
+**API Gateway:**
+```
+JWT_SECRET=<same as auth-service>
+EUREKA_URL=http://eureka-server.railway.internal:8761/eureka/
+CORS_ALLOWED_ORIGINS=https://git-insight-ai-one.vercel.app
+```
+
+**Auth Service:**
+```
+JWT_SECRET=<64+ random bytes>
+SPRING_DATASOURCE_URL=<Railway PostgreSQL URL>
+SPRING_DATASOURCE_USERNAME=<db user>
+SPRING_DATASOURCE_PASSWORD=<db password>
+REDIS_HOST=redis.railway.internal
+REDIS_PORT=<Railway Redis port>
+REDIS_PASSWORD=<Railway Redis password>
+EUREKA_URL=http://eureka-server.railway.internal:8761/eureka/
+GITHUB_CLIENT_ID=<OAuth client ID>
+GITHUB_CLIENT_SECRET=<OAuth client secret>
+GITHUB_OAUTH_REDIRECT_URI=https://git-insight-ai-one.vercel.app/api/auth/oauth/github/callback
+OAUTH_FRONTEND_REDIRECT_URI=https://git-insight-ai-one.vercel.app/auth/callback
+GITHUB_SERVICE_URL=http://github-service.railway.internal:8081
+INTERNAL_API_KEY=<shared secret>
+AUTH_COOKIE_SECURE=true
+AUTH_COOKIE_SAME_SITE=None
+JWT_MIN_SECRET_BYTES=64
+```
+
+**GitHub Service:**
+```
+JWT_SECRET=<same as auth-service>
+SPRING_DATASOURCE_URL=<Railway PostgreSQL URL>
+SPRING_DATASOURCE_USERNAME=<db user>
+SPRING_DATASOURCE_PASSWORD=<db password>
+REDIS_HOST=redis.railway.internal
+REDIS_PORT=<Railway Redis port>
+REDIS_PASSWORD=<Railway Redis password>
+EUREKA_URL=http://eureka-server.railway.internal:8761/eureka/
+GITHUB_TOKEN=<GitHub PAT>
+GEMINI_API_KEY=<Gemini API key>
+INTERNAL_API_KEY=<same as auth-service>
+JWT_MIN_SECRET_BYTES=64
+```
+
+### GitHub OAuth configuration
+
+Register these URLs in your GitHub OAuth App settings:
+
+- **Homepage URL:** `https://git-insight-ai-one.vercel.app`
+- **Authorization callback URL:** `https://git-insight-ai-one.vercel.app/api/auth/oauth/github/callback`
+
+The callback goes through Vercel → Railway Gateway → Auth Service.
+Auth Service sets HttpOnly cookies and redirects to `/auth/callback`.
+
+### Railway deployment notes
+
+- `vercel.json` rewrites make the Vercel→Railway connection **same-origin**
+  from the browser's perspective. No cross-origin cookie issues.
+- `AUTH_COOKIE_SECURE=true` is required because Vercel serves over HTTPS.
+- `AUTH_COOKIE_SAME_SITE=Lax` works with same-origin proxy (recommended).
+  Set `None` only if you need cross-origin fallback.
+- Internal services (auth, github) must NOT have public Railway domains.
+  Only the API Gateway is public.
 
 ## Option C — Freebuff hosting (frontend only)
 
