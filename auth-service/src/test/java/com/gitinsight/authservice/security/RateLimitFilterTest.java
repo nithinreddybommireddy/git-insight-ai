@@ -72,4 +72,101 @@ class RateLimitFilterTest {
         filter.doFilter(request("/api/auth/me", "10.0.0.1", null), response, chain);
         assertThat(response.getStatus()).isEqualTo(200);
     }
+
+    // ═══════════════════════════════════════════════════════
+    // Password reset rate limiting
+    // ═══════════════════════════════════════════════════════
+
+    @Test
+    void rateLimitsForgotPasswordEndpoint() throws Exception {
+        RateLimitFilter filter = filter(2);
+
+        // First two requests allowed.
+        MockHttpServletResponse r1 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "10.0.0.1", null), r1, chain);
+        assertThat(r1.getStatus()).isEqualTo(200);
+
+        MockHttpServletResponse r2 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "10.0.0.1", null), r2, chain);
+        assertThat(r2.getStatus()).isEqualTo(200);
+
+        // Third request blocked.
+        MockHttpServletResponse r3 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "10.0.0.1", null), r3, chain);
+        assertThat(r3.getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    void rateLimitsResetPasswordEndpoint() throws Exception {
+        RateLimitFilter filter = filter(2);
+
+        MockHttpServletResponse r1 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/reset-password", "10.0.0.1", null), r1, chain);
+        assertThat(r1.getStatus()).isEqualTo(200);
+
+        MockHttpServletResponse r2 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/reset-password", "10.0.0.1", null), r2, chain);
+        assertThat(r2.getStatus()).isEqualTo(200);
+
+        MockHttpServletResponse r3 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/reset-password", "10.0.0.1", null), r3, chain);
+        assertThat(r3.getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    void forgotPasswordAndResetPasswordHaveSeparateBudgets() throws Exception {
+        RateLimitFilter filter = filter(1);
+
+        // Use the budget on forgot-password.
+        MockHttpServletResponse fp = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "10.0.0.1", null), fp, chain);
+        assertThat(fp.getStatus()).isEqualTo(200);
+
+        // forgot-password is now blocked.
+        MockHttpServletResponse fp2 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "10.0.0.1", null), fp2, chain);
+        assertThat(fp2.getStatus()).isEqualTo(429);
+
+        // But reset-password has its own budget.
+        MockHttpServletResponse rp = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/reset-password", "10.0.0.1", null), rp, chain);
+        assertThat(rp.getStatus()).isEqualTo(200);
+    }
+
+    @Test
+    void spoofedForwardedForFromUntrustedPeerDoesNotBypassRateLimit() throws Exception {
+        RateLimitFilter filter = filter(1);
+
+        // First request from a public IP (not a trusted proxy).
+        MockHttpServletResponse r1 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "203.0.113.50", null), r1, chain);
+        assertThat(r1.getStatus()).isEqualTo(200);
+
+        // Attacker spoofs X-Forwarded-For from a public IP — not trusted because
+        // the direct peer (203.0.113.50) is not a known proxy.
+        MockHttpServletResponse r2 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "203.0.113.50", "1.2.3.4"), r2, chain);
+        assertThat(r2.getStatus()).isEqualTo(429);
+    }
+
+    @Test
+    void trustedProxyForwardedForIsUsed() throws Exception {
+        RateLimitFilter filter = filter(1);
+
+        // Request from a private proxy (Docker nginx gateway) with X-Forwarded-For.
+        // The proxy IP is trusted, so the forwarded client IP is used for rate limiting.
+        MockHttpServletResponse r1 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "172.17.0.1", "203.0.113.50"), r1, chain);
+        assertThat(r1.getStatus()).isEqualTo(200);
+
+        // Same forwarded client → blocked.
+        MockHttpServletResponse r2 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "172.17.0.1", "203.0.113.50"), r2, chain);
+        assertThat(r2.getStatus()).isEqualTo(429);
+
+        // Different forwarded client → allowed (different budget).
+        MockHttpServletResponse r3 = new MockHttpServletResponse();
+        filter.doFilter(request("/api/auth/forgot-password", "172.17.0.1", "10.0.0.99"), r3, chain);
+        assertThat(r3.getStatus()).isEqualTo(200);
+    }
 }

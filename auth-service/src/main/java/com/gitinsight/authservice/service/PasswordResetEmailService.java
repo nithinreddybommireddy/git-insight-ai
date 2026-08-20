@@ -15,7 +15,11 @@ import jakarta.mail.internet.MimeMessage;
 /**
  * Sends password reset emails when {@code MAIL_ENABLED=true} and a
  * {@link JavaMailSender} is available. When {@code MAIL_ENABLED=false}
- * (local development), the reset URL is logged to the console instead.
+ * (local development), the email is simply not sent — the token is
+ * never logged because a reset token is a temporary credential.
+ *
+ * <p>For local testing without SMTP, use the {@code /api/auth/dev/reset-token}
+ * endpoint (only available in dev/test profiles) to retrieve the token directly.
  */
 @Service
 public class PasswordResetEmailService {
@@ -43,7 +47,11 @@ public class PasswordResetEmailService {
         String resetUrl = frontendUrl + "/auth/reset-password?token=" + rawToken;
 
         if (!mailEnabled || mailSender == null) {
-            logLocalReset(toEmail, resetUrl);
+            // SECURITY: Never log the raw token or reset URL. A password-reset
+            // token is a temporary credential — logging it exposes the account
+            // to anyone with log access (operators, log aggregators, CI output).
+            // For local dev testing, use the dev-only test endpoint instead.
+            log.warn("MAIL_ENABLED=false — password reset email not sent to: {} (use dev profile to test)", toEmail);
             return;
         }
 
@@ -61,15 +69,6 @@ public class PasswordResetEmailService {
             // Do not throw — the token is already generated and valid.
             // The user can request another reset link.
         }
-    }
-
-    private void logLocalReset(String toEmail, String resetUrl) {
-        log.warn("═══════════════════════════════════════════════════════════════");
-        log.warn("  MAIL_ENABLED=false — Reset link NOT sent via email.");
-        log.warn("  To: {}", toEmail);
-        log.warn("  Reset URL (copy and paste into browser):");
-        log.warn("  {}", resetUrl);
-        log.warn("═══════════════════════════════════════════════════════════════");
     }
 
     private static String buildEmailBody(String userName, String resetUrl) {
