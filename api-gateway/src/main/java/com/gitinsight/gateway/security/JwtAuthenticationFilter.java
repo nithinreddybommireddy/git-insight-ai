@@ -1,5 +1,6 @@
 package com.gitinsight.gateway.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.security.AuthCookieNames;
 import com.gitinsight.common.security.JwtUtil;
 import org.slf4j.Logger;
@@ -9,6 +10,7 @@ import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
 import org.springframework.http.HttpCookie;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.stereotype.Component;
@@ -16,7 +18,10 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
+import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -64,14 +69,21 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
             "/actuator"
     );
 
+    /** POST AI endpoints that require JWT — not public like GET AI analysis. */
+    private static final Set<String> PROTECTED_AI_POST_PREFIXES = Set.of(
+            "/api/ai/commit-diff-review"
+    );
+
     private static final String RECRUITER_PREFIX = "/api/recruiter/";
     private static final String ADMIN_PREFIX = "/api/admin/";
     private static final Set<String> VALID_ROLES = Set.of("USER", "RECRUITER", "ADMIN");
 
     private final JwtUtil jwtUtil;
+    private final ObjectMapper objectMapper;
 
-    public JwtAuthenticationFilter(JwtUtil jwtUtil) {
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, ObjectMapper objectMapper) {
         this.jwtUtil = jwtUtil;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -84,8 +96,8 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
                 .headers(h -> TRUSTED_HEADERS.forEach(h::remove))
                 .build();
 
-        // Step 2: Public routes — forward without JWT.
-        if (isPublicRoute(path)) {
+        // Step 2: Public routes — but POST to protected AI endpoints still needs JWT.
+        if (isPublicRoute(path) && !isProtectedAiPost(path, request)) {
             return chain.filter(exchange.mutate().request(strippedRequest).build());
         }
 
@@ -149,13 +161,23 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         return Ordered.HIGHEST_PRECEDENCE + 10;
     }
 
-    // ── Exact-segment public route matching ─────────────────────────
-    // Uses: path.equals(prefix) || path.startsWith(prefix + "/")
-    // This prevents /api/githubFake from matching prefix /api/github.
+    // ── Route classification ────────────────────────────────────────
 
     private boolean isPublicRoute(String path) {
         return PUBLIC_PREFIXES.stream().anyMatch(prefix ->
                 path.equals(prefix) || path.startsWith(prefix + "/"));
+    }
+
+    /**
+     * POST to specific AI endpoints (like commit-diff-review) requires JWT
+     * even though GET /api/ai/** is public for developer analysis.
+     */
+    private boolean isProtectedAiPost(String path, ServerHttpRequest request) {
+        String method = request.getMethod() != null ? request.getMethod().name() : "GET";
+        if (!"POST".equals(method)) {
+            return false;
+        }
+        return PROTECTED_AI_POST_PREFIXES.stream().anyMatch(path::startsWith);
     }
 
     private boolean isRecruiterPath(String path) {
@@ -180,27 +202,33 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
         return null;
     }
 
-    // ── Error responses ─────────────────────────────────────────────
+    // ── Error responses — safe JSON via ObjectMapper ────────────────
 
     private Mono<Void> unauthorized(ServerWebExchange exchange, String message) {
-        ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(HttpStatus.UNAUTHORIZED);
-        response.getHeaders().add("Content-Type", "application/json");
-        return response.writeWith(Mono.just(
-                response.bufferFactory().wrap(
-                        String.format("{\"status\":401,\"message\":\"%s\"}", message).getBytes()
-                )
-        ));
+        return writeJson(exchange, HttpStatus.UNAUTHORIZED, 401, message);
     }
 
     private Mono<Void> forbidden(ServerWebExchange exchange, String message) {
+        return writeJson(exchange, HttpStatus.FORBIDDEN, 403, message);
+    }
+
+    private Mono<Void> writeJson(ServerWebExchange exchange, HttpStatus status, int code, String message) {
         ServerHttpResponse response = exchange.getResponse();
-        response.setStatusCode(HttpStatus.FORBIDDEN);
-        response.getHeaders().add("Content-Type", "application/json");
-        return response.writeWith(Mono.just(
-                response.bufferFactory().wrap(
-                        String.format("{\"status\":403,\"message\":\"%s\"}", message).getBytes()
-                )
-        ));
+        response.setStatusCode(status);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", code);
+        body.put("message", message);
+
+        try {
+            byte[] json = objectMapper.writeValueAsBytes(body);
+            return response.writeWith(Mono.just(response.bufferFactory().wrap(json)));
+        } catch (Exception e) {
+            String fallback = "{\"status\":" + code + ",\"message\":\"Error\"}";
+            return response.writeWith(Mono.just(
+                    response.bufferFactory().wrap(fallback.getBytes(StandardCharsets.UTF_8))
+            ));
+        }
     }
 }

@@ -97,7 +97,7 @@ a public domain; all others use Railway private networking.
 |---|---|---|
 | api-gateway | ✅ `https://<gateway>.up.railway.app` | `api-gateway.railway.internal` |
 | auth-service | ❌ | `auth-service.railway.internal` |
-| github-service | ❌ | `github-service.railway.internal` |
+| github-service | ❌ | *(copy from Railway service Settings)* |
 | eureka-server | ❌ | `eureka-server.railway.internal` |
 | PostgreSQL | ❌ | *(managed Railway DB)* |
 | Redis | ❌ | *(managed Railway Redis)* |
@@ -157,9 +157,9 @@ SPRING_DATASOURCE_USERNAME=${{Postgres.PGUSER}}
 SPRING_DATASOURCE_PASSWORD=${{Postgres.PGPASSWORD}}
 
 # Redis
-REDIS_HOST=${{Redis.REDIS_PRIVATE_URL}}
-REDIS_PORT=6379
-REDIS_PASSWORD=${{Redis.REDIS_PASSWORD}}
+REDIS_HOST=${{Redis.REDISHOST}}
+REDIS_PORT=${{Redis.REDISPORT}}
+REDIS_PASSWORD=${{Redis.REDISPASSWORD}}
 
 # Eureka — copy the actual Private Domain from the Eureka service.
 EUREKA_URL=http://<eureka-actual-private-domain>:8761/eureka/

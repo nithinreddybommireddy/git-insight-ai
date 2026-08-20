@@ -4,6 +4,8 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -12,21 +14,30 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * Shared Bearer-JWT extraction filter used by auth-service and github-service.
  *
- * <p>Extracts a {@code Authorization: Bearer <token>} header (tokens minted by
- * auth-service), validates it against the shared {@link JwtUtil}, and populates
- * the Spring Security context so authenticated-only endpoints can authorize the
- * request. Requests without a valid token simply continue unauthenticated —
- * each service's {@code SecurityFilterChain} decides which paths require auth.
+ * <p>Extracts a {@code Authorization: Bearer <token>} header or the
+ * {@code gitinsight_access_token} HttpOnly cookie, validates it against the
+ * shared {@link JwtUtil}, and populates the Spring Security context so
+ * authenticated-only endpoints can authorize the request.
+ *
+ * <p>Requests without a valid token (or with malformed claims) simply continue
+ * unauthenticated — each service's {@code SecurityFilterChain} decides which
+ * paths require auth and returns 401/403 accordingly.
  *
  * <p>Intentionally <em>not</em> a Spring {@code @Component}: services register
  * it as a {@code @Bean} so services that do not need JWT (e.g. analytics) are
  * unaffected by the shared security code.
  */
 public class JwtAuthFilter extends OncePerRequestFilter {
+
+    private static final Logger log = LoggerFactory.getLogger(JwtAuthFilter.class);
+
+    /** Valid roles accepted from JWT claims. */
+    private static final Set<String> VALID_ROLES = Set.of("USER", "RECRUITER", "ADMIN");
 
     private final JwtUtil jwtUtil;
 
@@ -43,16 +54,41 @@ public class JwtAuthFilter extends OncePerRequestFilter {
 
         // Only access tokens authorize API requests. A stolen refresh token must
         // never double as a bearer token (refresh tokens carry no role claim).
-        if (token != null
-                && jwtUtil.validateToken(token)
-                && JwtUtil.TOKEN_TYPE_ACCESS.equals(jwtUtil.getTokenType(token))) {
-            Long userId = jwtUtil.getUserIdFromToken(token);
-            String role = jwtUtil.getRoleFromToken(token);
+        if (token != null && jwtUtil.validateToken(token)) {
+            try {
+                String tokenType = jwtUtil.getTokenType(token);
+                if (!JwtUtil.TOKEN_TYPE_ACCESS.equals(tokenType)) {
+                    // Refresh or unknown token type — continue unauthenticated.
+                    filterChain.doFilter(request, response);
+                    return;
+                }
 
-            var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
-            var authentication = new UsernamePasswordAuthenticationToken(userId, null, authorities);
+                Long userId = jwtUtil.getUserIdFromToken(token);
+                String role = jwtUtil.getRoleFromToken(token);
 
-            SecurityContextHolder.getContext().setAuthentication(authentication);
+                // Validate subject is a valid numeric ID.
+                if (userId == null || userId <= 0) {
+                    log.warn("JWT has invalid subject (userId={})", userId);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                // Validate role is one of the known roles — do not trust arbitrary values.
+                if (role == null || !VALID_ROLES.contains(role)) {
+                    log.warn("JWT has invalid role: '{}'", role);
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
+                var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role));
+                var authentication = new UsernamePasswordAuthenticationToken(userId, null, authorities);
+                SecurityContextHolder.getContext().setAuthentication(authentication);
+
+            } catch (Exception e) {
+                // Malformed claims, parse errors, missing fields — continue unauthenticated.
+                // Downstream SecurityFilterChain will return 401 for protected endpoints.
+                log.warn("Failed to extract JWT claims: {}", e.getMessage());
+            }
         }
 
         filterChain.doFilter(request, response);

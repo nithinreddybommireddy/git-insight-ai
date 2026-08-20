@@ -17,8 +17,7 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 | `GITHUB_CLIENT_SECRET` | auth-service | *(empty → OAuth disabled)* | GitHub OAuth app client secret (only for OAuth login) |
 | `GITHUB_OAUTH_REDIRECT_URI` | auth-service | `http://localhost:8080/api/auth/oauth/github/callback` | Public callback URL registered in the GitHub OAuth app (goes through Gateway) |
 | `OAUTH_FRONTEND_REDIRECT_URI` | auth-service | `http://localhost:5173/auth/callback` | Where the browser lands after OAuth login (frontend token-consumer route) |
-| `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Internal URL for auth→github-service server-to-server calls. **Production:** use Railway private networking, e.g. `http://github-service.railway.internal:8081` |
-| `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Base URL auth-service uses to reach github-service |
+| `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Internal URL for auth→github-service server-to-server calls. **Production:** use Railway private networking, e.g. `http://<github-service-private-domain>:8081` (copy the actual Private Domain from the Railway service Settings tab) |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | auth + github-service | `localhost` / `6379` / *(empty)* | Shared Redis: GitHub/AI cache, AI rate limiting (github-service), login rate limiting + OAuth state (auth-service). Services degrade gracefully when Redis is down |
 | `AI_RATE_LIMIT_PER_MINUTE` | github-service | `30` | Per-client budget for `/api/ai/**` (each call can consume Gemini quota) |
 | `AUTH_COOKIE_SECURE` | auth-service | `false` | Set `true` behind HTTPS so the HttpOnly session cookies get the `Secure` flag |

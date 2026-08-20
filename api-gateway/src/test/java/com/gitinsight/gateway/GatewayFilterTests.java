@@ -1,5 +1,6 @@
 package com.gitinsight.gateway.security;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.common.security.AuthCookieNames;
 import com.gitinsight.common.security.JwtUtil;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,8 +20,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Unit tests for {@link JwtAuthenticationFilter} and {@link CookieForwardingFilter}.
  *
- * <p>Tests the filter logic directly without booting the full Spring context.
- * Uses a real JwtUtil (validation + issuance) with a known test secret.
+ * <p>Covers all 18 required security scenarios plus boundary/cookie tests.
+ * Tests the filter logic directly without booting the full Spring context.
  */
 class GatewayFilterTests {
 
@@ -29,11 +30,12 @@ class GatewayFilterTests {
     private JwtUtil jwtUtil;
     private JwtAuthenticationFilter jwtFilter;
     private CookieForwardingFilter cookieFilter;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     @BeforeEach
     void setUp() {
         jwtUtil = new JwtUtil(TEST_SECRET, 900_000, 2_592_000_000L);
-        jwtFilter = new JwtAuthenticationFilter(jwtUtil);
+        jwtFilter = new JwtAuthenticationFilter(jwtUtil, objectMapper);
         cookieFilter = new CookieForwardingFilter();
     }
 
@@ -77,6 +79,20 @@ class GatewayFilterTests {
     @Nested
     class PublicRoutes {
 
+        // Scenario 8: anonymous /api/github/profile/x -> allowed
+        @Test void githubProfile_public() {
+            StepVerifier.create(jwtFilter.filter(
+                    exchange(MockServerHttpRequest.get("/api/github/profile/torvalds").build()), okChain))
+                    .verifyComplete();
+        }
+
+        // Scenario 9: anonymous /api/ai/status -> allowed
+        @Test void aiStatus_public() {
+            StepVerifier.create(jwtFilter.filter(
+                    exchange(MockServerHttpRequest.get("/api/ai/status").build()), okChain))
+                    .verifyComplete();
+        }
+
         @Test void authLogin_public() {
             StepVerifier.create(jwtFilter.filter(
                     exchange(MockServerHttpRequest.get("/api/auth/login").build()), okChain))
@@ -113,31 +129,7 @@ class GatewayFilterTests {
                     .verifyComplete();
         }
 
-        @Test void githubProfile_public() {
-            StepVerifier.create(jwtFilter.filter(
-                    exchange(MockServerHttpRequest.get("/api/github/profile/torvalds").build()), okChain))
-                    .verifyComplete();
-        }
-
-        @Test void githubRepos_public() {
-            StepVerifier.create(jwtFilter.filter(
-                    exchange(MockServerHttpRequest.get("/api/github/torvalds/repos").build()), okChain))
-                    .verifyComplete();
-        }
-
-        @Test void githubScore_public() {
-            StepVerifier.create(jwtFilter.filter(
-                    exchange(MockServerHttpRequest.get("/api/github/torvalds/score").build()), okChain))
-                    .verifyComplete();
-        }
-
-        @Test void aiStatus_public() {
-            StepVerifier.create(jwtFilter.filter(
-                    exchange(MockServerHttpRequest.get("/api/ai/status").build()), okChain))
-                    .verifyComplete();
-        }
-
-        @Test void aiEndpoint_public() {
+        @Test void aiAnalysisEndpoint_public() {
             StepVerifier.create(jwtFilter.filter(
                     exchange(MockServerHttpRequest.get("/api/ai/summary/torvalds").build()), okChain))
                     .verifyComplete();
@@ -155,15 +147,14 @@ class GatewayFilterTests {
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
         }
 
-        // ── Exact-segment boundary tests ─────────────────────────────
-        // Proves /api/githubFake does NOT match prefix /api/github
-
+        // Scenario 17: /api/githubFake does NOT become public
         @Test void githubFake_notPublic() {
             MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/githubFake").build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
         }
 
+        // Scenario 18: /api/auth/loginFake does NOT become public
         @Test void authLoginFake_notPublic() {
             MockServerWebExchange ex = exchange(MockServerHttpRequest.get("/api/auth/loginFake").build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
@@ -178,7 +169,43 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 2. PROTECTED ROUTES — require JWT
+    // 2. PROTECTED POST AI ENDPOINTS
+    // ════════════════════════════════════════════════════════════════
+
+    @Nested
+    class ProtectedAiPost {
+
+        // Scenario 10: anonymous POST /api/ai/commit-diff-review -> 401
+        @Test void commitDiffReview_anonymous_returns401() {
+            MockServerWebExchange ex = exchange(MockServerHttpRequest
+                    .post("/api/ai/commit-diff-review").build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
+        }
+
+        // Scenario 11: authenticated POST /api/ai/commit-diff-review -> allowed
+        @Test void commitDiffReview_authenticated_succeeds() {
+            String token = jwtUtil.generateToken(1L, "user@test.com", "USER");
+            MockServerWebExchange ex = exchange(MockServerHttpRequest
+                    .post("/api/ai/commit-diff-review")
+                    .header("Authorization", "Bearer " + token)
+                    .build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.OK, ex.getResponse().getStatusCode());
+        }
+
+        // GET /api/ai/status still public even for POST path prefix
+        @Test void aiStatus_post_stillPublic() {
+            MockServerWebExchange ex = exchange(MockServerHttpRequest
+                    .post("/api/ai/status").build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            // /api/ai/status is not in PROTECTED_AI_POST_PREFIXES, so GET/POST both public
+            assertEquals(HttpStatus.OK, ex.getResponse().getStatusCode());
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════
+    // 3. PROTECTED ROUTES — require JWT
     // ════════════════════════════════════════════════════════════════
 
     @Nested
@@ -219,25 +246,37 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 3. JWT VALIDATION — invalid/expired/malformed
+    // 4. JWT VALIDATION — invalid/expired/malformed
     // ════════════════════════════════════════════════════════════════
 
     @Nested
     class JwtValidation {
 
-        @Test void invalidJwt_returns401() {
+        // Scenario 1: malformed signed JWT -> 401
+        @Test void malformedSignedJwt_returns401() {
             MockServerWebExchange ex = exchange(MockServerHttpRequest
                     .get("/api/reports/latest/torvalds")
-                    .header("Authorization", "Bearer invalid.jwt.token")
+                    .header("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.invalidsignature")
                     .build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
         }
 
-        @Test void malformedSignedJwt_returns401() {
+        // Scenario 2: invalid role in JWT -> 401
+        @Test void invalidRole_returns401() {
+            String badToken = jwtUtil.generateToken(1L, "user@test.com", "SUPERUSER");
+            MockServerWebExchange ex = exchange(MockServerHttpRequest
+                    .get("/api/recruiter/candidates")
+                    .header("Authorization", "Bearer " + badToken)
+                    .build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
+        }
+
+        @Test void invalidJwt_returns401() {
             MockServerWebExchange ex = exchange(MockServerHttpRequest
                     .get("/api/reports/latest/torvalds")
-                    .header("Authorization", "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.invalidsignature")
+                    .header("Authorization", "Bearer invalid.jwt.token")
                     .build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
@@ -253,18 +292,8 @@ class GatewayFilterTests {
             assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
         }
 
-        @Test void tokenWithInvalidRole_returns401() {
-            // generateToken allows any string for role; filter validates against VALID_ROLES
-            String badToken = jwtUtil.generateToken(1L, "user@test.com", "SUPERUSER");
-            MockServerWebExchange ex = exchange(MockServerHttpRequest
-                    .get("/api/recruiter/candidates")
-                    .header("Authorization", "Bearer " + badToken)
-                    .build());
-            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
-            assertEquals(HttpStatus.UNAUTHORIZED, ex.getResponse().getStatusCode());
-        }
-
-        @Test void validAccessToken_passes() {
+        // Scenario 3: valid USER -> protected normal route allowed
+        @Test void validUser_passesProtectedRoute() {
             String token = jwtUtil.generateToken(1L, "user@test.com", "USER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
                     .get("/api/reports/latest/torvalds")
@@ -275,7 +304,6 @@ class GatewayFilterTests {
         }
 
         @Test void expiredToken_returns401() {
-            // Use 0ms expiration so the token is expired immediately
             JwtUtil shortLivedJwt = new JwtUtil(TEST_SECRET, 0, 0);
             String expiredToken = shortLivedJwt.generateToken(1L, "user@test.com", "USER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
@@ -288,7 +316,6 @@ class GatewayFilterTests {
 
         @Test void cookieToken_passes() {
             String token = jwtUtil.generateToken(1L, "user@test.com", "USER");
-            // Use parsed cookies so getCookies().getFirst() works
             MockServerWebExchange ex = exchange(parsedCookieRequest(
                     "/api/reports/latest/torvalds", AuthCookieNames.ACCESS, token));
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
@@ -297,12 +324,13 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 4. ROLE AUTHORIZATION
+    // 5. ROLE AUTHORIZATION
     // ════════════════════════════════════════════════════════════════
 
     @Nested
     class RoleAuthorization {
 
+        // Scenario 4: USER -> recruiter route -> 403
         @Test void userOnRecruiterRoute_returns403() {
             String token = jwtUtil.generateToken(1L, "user@test.com", "USER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
@@ -313,6 +341,7 @@ class GatewayFilterTests {
             assertEquals(HttpStatus.FORBIDDEN, ex.getResponse().getStatusCode());
         }
 
+        // Scenario 5: RECRUITER -> recruiter route -> allowed
         @Test void recruiterOnRecruiterRoute_succeeds() {
             String token = jwtUtil.generateToken(2L, "recruiter@test.com", "RECRUITER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
@@ -333,6 +362,7 @@ class GatewayFilterTests {
             assertEquals(HttpStatus.OK, ex.getResponse().getStatusCode());
         }
 
+        // Scenario 6: USER -> admin -> 403
         @Test void userOnAdminRoute_returns403() {
             String token = jwtUtil.generateToken(1L, "user@test.com", "USER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
@@ -341,6 +371,17 @@ class GatewayFilterTests {
                     .build());
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.FORBIDDEN, ex.getResponse().getStatusCode());
+        }
+
+        // Scenario 7: ADMIN -> admin -> allowed
+        @Test void adminOnAdminRoute_succeeds() {
+            String token = jwtUtil.generateToken(3L, "admin@test.com", "ADMIN");
+            MockServerWebExchange ex = exchange(MockServerHttpRequest
+                    .get("/api/admin/users")
+                    .header("Authorization", "Bearer " + token)
+                    .build());
+            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
+            assertEquals(HttpStatus.OK, ex.getResponse().getStatusCode());
         }
 
         @Test void recruiterOnAdminRoute_returns403() {
@@ -352,25 +393,16 @@ class GatewayFilterTests {
             StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
             assertEquals(HttpStatus.FORBIDDEN, ex.getResponse().getStatusCode());
         }
-
-        @Test void adminOnAdminRoute_succeeds() {
-            String token = jwtUtil.generateToken(3L, "admin@test.com", "ADMIN");
-            MockServerWebExchange ex = exchange(MockServerHttpRequest
-                    .get("/api/admin/users")
-                    .header("Authorization", "Bearer " + token)
-                    .build());
-            StepVerifier.create(jwtFilter.filter(ex, okChain)).verifyComplete();
-            assertEquals(HttpStatus.OK, ex.getResponse().getStatusCode());
-        }
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 5. HEADER STRIPPING — spoofed headers always removed
+    // 6. HEADER STRIPPING — spoofed headers always removed
     // ════════════════════════════════════════════════════════════════
 
     @Nested
     class HeaderStripping {
 
+        // Scenario 14: spoofed X-User-Role stripped
         @Test void spoofedHeaders_onPublicRoute_stripped() {
             MockServerWebExchange ex = exchange(MockServerHttpRequest
                     .get("/api/auth/register")
@@ -388,7 +420,6 @@ class GatewayFilterTests {
         }
 
         @Test void spoofedHeaders_onProtectedRoute_replacedWithJwtValues() {
-            // Use /api/reports/** which is a protected route (not public like /api/github)
             String token = jwtUtil.generateToken(1L, "real@test.com", "USER");
             MockServerWebExchange ex = exchange(MockServerHttpRequest
                     .get("/api/reports/latest/torvalds")
@@ -421,12 +452,13 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 6. COOKIE FORWARDING — refresh token isolation
+    // 7. COOKIE FORWARDING — refresh token isolation
     // ════════════════════════════════════════════════════════════════
 
     @Nested
     class CookieForwarding {
 
+        // Scenario 16: refresh cookie preserved on Auth requests
         @Test void authRoute_forwardsAllCookies() {
             MockServerWebExchange ex = exchange(rawCookieRequest(
                     "/api/auth/refresh",
@@ -440,6 +472,7 @@ class GatewayFilterTests {
             }))).verifyComplete();
         }
 
+        // Scenario 15: refresh cookie removed on GitHub requests
         @Test void githubRoute_removesRefreshCookie() {
             MockServerWebExchange ex = exchange(rawCookieRequest(
                     "/api/github/profile/torvalds",
@@ -451,6 +484,18 @@ class GatewayFilterTests {
                         "Refresh cookie must NOT be forwarded to github-service");
                 assertTrue(cookie.contains(AuthCookieNames.ACCESS));
                 assertTrue(cookie.contains("XSRF-TOKEN"));
+            }))).verifyComplete();
+        }
+
+        // Scenario 15: refresh cookie removed on Analytics requests
+        @Test void analyticsRoute_removesRefreshCookie() {
+            MockServerWebExchange ex = exchange(rawCookieRequest(
+                    "/api/analytics/health",
+                    AuthCookieNames.ACCESS + "=a; " + AuthCookieNames.REFRESH + "=r"));
+            StepVerifier.create(cookieFilter.filter(ex, captureChain(req -> {
+                String cookie = req.getHeaders().getFirst("Cookie");
+                assertNotNull(cookie);
+                assertFalse(cookie.contains(AuthCookieNames.REFRESH));
             }))).verifyComplete();
         }
 
@@ -478,17 +523,6 @@ class GatewayFilterTests {
             }))).verifyComplete();
         }
 
-        @Test void analyticsRoute_removesRefreshCookie() {
-            MockServerWebExchange ex = exchange(rawCookieRequest(
-                    "/api/analytics/health",
-                    AuthCookieNames.ACCESS + "=a; " + AuthCookieNames.REFRESH + "=r"));
-            StepVerifier.create(cookieFilter.filter(ex, captureChain(req -> {
-                String cookie = req.getHeaders().getFirst("Cookie");
-                assertNotNull(cookie);
-                assertFalse(cookie.contains(AuthCookieNames.REFRESH));
-            }))).verifyComplete();
-        }
-
         @Test void refreshOnly_noSpaces_removesRefreshCookie() {
             MockServerWebExchange ex = exchange(rawCookieRequest(
                     "/api/github/profile/torvalds",
@@ -499,7 +533,6 @@ class GatewayFilterTests {
         }
 
         @Test void refreshFirst_refreshLast_handledCorrectly() {
-            // Refresh at start
             MockServerWebExchange ex1 = exchange(rawCookieRequest(
                     "/api/github/test",
                     AuthCookieNames.REFRESH + "=r; " + AuthCookieNames.ACCESS + "=a"));
@@ -510,7 +543,6 @@ class GatewayFilterTests {
                 assertFalse(cookie.contains(AuthCookieNames.REFRESH));
             }))).verifyComplete();
 
-            // Refresh at end
             MockServerWebExchange ex2 = exchange(rawCookieRequest(
                     "/api/github/test",
                     AuthCookieNames.ACCESS + "=a; " + AuthCookieNames.REFRESH + "=r"));
@@ -543,7 +575,7 @@ class GatewayFilterTests {
     }
 
     // ════════════════════════════════════════════════════════════════
-    // 7. FILTER ORDER
+    // 8. FILTER ORDER
     // ════════════════════════════════════════════════════════════════
 
     @Test

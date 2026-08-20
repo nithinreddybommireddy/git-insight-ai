@@ -102,7 +102,9 @@ public class SecurityConfig {
                         // Public GitHub analysis
                         .requestMatchers("/api/github/**").permitAll()
 
-                        // AI endpoints are rate-limited separately
+                        // AI: GET analysis endpoints are public, POST commit-diff-review requires JWT
+                        .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/ai/**").permitAll()
+                        .requestMatchers("/api/ai/commit-diff-review").authenticated()
                         .requestMatchers("/api/ai/**").permitAll()
 
                         // Developer reports require authentication
