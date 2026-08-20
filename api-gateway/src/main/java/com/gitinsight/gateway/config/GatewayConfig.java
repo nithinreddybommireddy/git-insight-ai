@@ -1,8 +1,10 @@
 package com.gitinsight.gateway.config;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.gitinsight.gateway.exception.GatewayExceptionHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
 /**
  * Gateway configuration.
  *
@@ -18,7 +20,7 @@ import org.springframework.context.annotation.Configuration;
 public class GatewayConfig {
 
     @Bean
-    public GatewayExceptionHandler gatewayExceptionHandler() {
-        return new GatewayExceptionHandler();
+    public GatewayExceptionHandler gatewayExceptionHandler(ObjectMapper objectMapper) {
+        return new GatewayExceptionHandler(objectMapper);
     }
 }

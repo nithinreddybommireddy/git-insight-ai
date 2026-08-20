@@ -1,5 +1,6 @@
 package com.gitinsight.gateway.exception;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.cloud.gateway.support.NotFoundException;
@@ -16,6 +17,8 @@ import reactor.netty.http.client.PrematureCloseException;
 
 import java.net.ConnectException;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -31,11 +34,19 @@ import java.util.concurrent.TimeoutException;
  *   <li>Other ResponseStatusException → mapped status code</li>
  *   <li>Unexpected internal failure → <b>500 Internal Server Error</b></li>
  * </ul>
+ *
+ * <p>Uses {@link ObjectMapper} for safe JSON serialization — no manual string
+ * escaping that could produce malformed JSON with special characters.
  */
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class GatewayExceptionHandler implements WebExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GatewayExceptionHandler.class);
+    private final ObjectMapper objectMapper;
+
+    public GatewayExceptionHandler(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
 
     @Override
     public Mono<Void> handle(ServerWebExchange exchange, Throwable ex) {
@@ -49,35 +60,31 @@ public class GatewayExceptionHandler implements WebExceptionHandler {
         String message;
 
         if (ex instanceof NotFoundException nfe) {
-            // Spring Cloud Gateway throws this when Eureka has no instances for the
-            // service, or when no route matches. Distinguish the two when possible.
             String reason = nfe.getReason();
             if (reason != null && reason.contains("Unable to find the route")) {
-                // No matching route predicate — the path is simply unknown.
                 status = HttpStatus.NOT_FOUND.value();
                 message = "Route not found";
                 log.debug("No matching route: {}", ex.getMessage());
             } else {
-                // Route exists but Eureka has no service instance.
                 status = HttpStatus.SERVICE_UNAVAILABLE.value();
                 message = "Service unavailable";
                 log.warn("Service not found (no instances): {}", ex.getMessage());
             }
         } else if (ex instanceof TimeoutException) {
             status = HttpStatus.GATEWAY_TIMEOUT.value();
-            message = "Gateway timeout — the upstream service did not respond in time";
+            message = "Gateway timeout";
             log.warn("Gateway timeout: {}", ex.getMessage());
         } else if (ex instanceof ConnectException) {
             status = HttpStatus.SERVICE_UNAVAILABLE.value();
-            message = "Service unavailable — downstream connection refused";
+            message = "Service unavailable";
             log.warn("Connection refused: {}", ex.getMessage());
         } else if (ex instanceof PrematureCloseException) {
             status = HttpStatus.SERVICE_UNAVAILABLE.value();
-            message = "Service unavailable — connection closed prematurely";
+            message = "Service unavailable";
             log.warn("Premature close: {}", ex.getMessage());
         } else if (ex instanceof io.netty.channel.ConnectTimeoutException) {
             status = HttpStatus.GATEWAY_TIMEOUT.value();
-            message = "Gateway timeout — connection to upstream timed out";
+            message = "Gateway timeout";
             log.warn("Netty connect timeout: {}", ex.getMessage());
         } else if (ex instanceof ResponseStatusException rse) {
             status = rse.getStatusCode().value();
@@ -91,13 +98,19 @@ public class GatewayExceptionHandler implements WebExceptionHandler {
         response.setStatusCode(HttpStatus.valueOf(status));
         response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
 
-        String body = String.format(
-                "{\"status\":%d,\"message\":\"%s\"}",
-                status, message.replace("\"", "\\\"")
-        );
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("status", status);
+        body.put("message", message);
 
-        return response.writeWith(Mono.just(
-                response.bufferFactory().wrap(body.getBytes(StandardCharsets.UTF_8))
-        ));
+        try {
+            byte[] json = objectMapper.writeValueAsBytes(body);
+            return response.writeWith(Mono.just(response.bufferFactory().wrap(json)));
+        } catch (Exception e) {
+            // Fallback: manually constructed but only with known-safe content
+            String fallback = "{\"status\":" + status + ",\"message\":\"Error\"}";
+            return response.writeWith(Mono.just(
+                    response.bufferFactory().wrap(fallback.getBytes(StandardCharsets.UTF_8))
+            ));
+        }
     }
 }

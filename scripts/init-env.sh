@@ -20,17 +20,19 @@ if [ ! -f "$TEMPLATE" ]; then
 fi
 
 if [ -f "$ENV_FILE" ]; then
-  if grep -q '^JWT_SECRET=.\+' "$ENV_FILE"; then
+  if grep -q '^JWT_SECRET=.\\+' "$ENV_FILE"; then
     echo ".env already exists with JWT_SECRET set — leaving it untouched."
     echo "Next: docker compose up --build"
     exit 0
   fi
   echo ".env exists but JWT_SECRET is blank — generating one and appending it."
-  printf '\nJWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+  # 64 bytes — matches JWT_MIN_SECRET_BYTES=64 used in docker-compose.yml
+  printf '\nJWT_SECRET=%s\n' "$(openssl rand -hex 64)" >> "$ENV_FILE"
 else
   cp "$TEMPLATE" "$ENV_FILE"
   echo ".env created from docker/env.example — generating JWT_SECRET."
-  printf '\nJWT_SECRET=%s\n' "$(openssl rand -hex 32)" >> "$ENV_FILE"
+  # 64 bytes — matches JWT_MIN_SECRET_BYTES=64 used in docker-compose.yml
+  printf '\nJWT_SECRET=%s\n' "$(openssl rand -hex 64)" >> "$ENV_FILE"
 fi
 
 echo "Done. Add GITHUB_TOKEN / GEMINI_API_KEY / OAuth credentials to .env if you have them."

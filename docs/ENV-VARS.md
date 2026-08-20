@@ -10,7 +10,7 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 |---|---|---|---|
 | `SPRING_DATASOURCE_USERNAME` | all 3 DB services | `postgres` | PostgreSQL username |
 | `SPRING_DATASOURCE_PASSWORD` | all 3 DB services | `postgres` | PostgreSQL password |
-| `JWT_SECRET` | auth-service + github-service | **none — required** | Random 32+ byte key; signs JWTs (auth) and validates them (github reports). Generate with `openssl rand -base64 48` |
+| `JWT_SECRET` | auth-service + github-service | **none — required** | Random 64+ byte key; signs JWTs (auth) and validates them (github reports). Generate with `openssl rand -hex 64` |
 | `GITHUB_TOKEN` | github-service | *(empty → anonymous)* | GitHub API token — **60 req/hr without it, 5,000 req/hr with it** |
 | `GEMINI_API_KEY` | github-service | *(empty → template fallback)* | Enables real AI summaries, roadmaps, skills, interview & code reviews |
 | `GITHUB_CLIENT_ID` | auth-service | *(empty → OAuth disabled)* | GitHub OAuth app client id (only for OAuth login) |

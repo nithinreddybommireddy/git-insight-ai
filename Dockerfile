@@ -8,6 +8,7 @@
 #   docker build --target github-service     -t gitinsight/github-service .
 #   docker build --target analytics-service  -t gitinsight/analytics-service .
 #   docker build --target auth-service       -t gitinsight/auth-service .
+#   docker build --target api-gateway        -t gitinsight/api-gateway .
 #
 # Or just `docker compose up --build` which wires everything together.
 # ============================================================================

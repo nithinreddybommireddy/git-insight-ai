@@ -7,6 +7,8 @@ import com.gitinsight.authservice.security.OAuthStateStore;
 import com.gitinsight.authservice.service.AuthService;
 import com.gitinsight.common.dto.response.ApiResponse;
 import jakarta.servlet.http.Cookie;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -24,6 +26,8 @@ import java.util.Arrays;
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
     private final AuthService authService;
     private final OAuthProperties oauthProperties;
@@ -51,9 +55,14 @@ public class AuthController {
         try {
             AuthResponse response = authService.register(request);
             return withSessionCookies(ResponseEntity.ok(new ApiResponse<>(true, "Registration successful", response)), response);
-        } catch (RuntimeException e) {
+        } catch (IllegalArgumentException e) {
+            // Known business errors (email already exists, weak password) — safe to expose.
             return ResponseEntity.badRequest()
                     .body(new ApiResponse<>(false, e.getMessage(), null));
+        } catch (RuntimeException e) {
+            log.error("Unexpected registration error", e);
+            return ResponseEntity.badRequest()
+                    .body(new ApiResponse<>(false, "Registration failed. Please try again.", null));
         }
     }
 
@@ -62,9 +71,14 @@ public class AuthController {
         try {
             AuthResponse response = authService.login(request);
             return withSessionCookies(ResponseEntity.ok(new ApiResponse<>(true, "Login successful", response)), response);
-        } catch (RuntimeException e) {
+        } catch (IllegalArgumentException e) {
+            // Known: invalid credentials, disabled account — safe to expose.
             return ResponseEntity.status(401)
                     .body(new ApiResponse<>(false, e.getMessage(), null));
+        } catch (RuntimeException e) {
+            log.error("Unexpected login error", e);
+            return ResponseEntity.status(401)
+                    .body(new ApiResponse<>(false, "Login failed. Please try again.", null));
         }
     }
 
@@ -88,9 +102,14 @@ public class AuthController {
         try {
             AuthResponse response = authService.refresh(refreshToken);
             return withSessionCookies(ResponseEntity.ok(new ApiResponse<>(true, "Token refreshed successfully", response)), response);
-        } catch (RuntimeException e) {
+        } catch (IllegalArgumentException e) {
+            // Known: expired/invalid refresh token — safe to expose.
             return ResponseEntity.status(401)
                     .body(new ApiResponse<>(false, e.getMessage(), null));
+        } catch (RuntimeException e) {
+            log.error("Unexpected refresh error", e);
+            return ResponseEntity.status(401)
+                    .body(new ApiResponse<>(false, "Session expired. Please log in again.", null));
         }
     }
 
@@ -182,7 +201,9 @@ public class AuthController {
                     .header(HttpHeaders.SET_COOKIE, authCookieService.sessionCookies(response, accessMaxAgeSeconds, refreshMaxAgeSeconds))
                     .build();
         } catch (RuntimeException e) {
-            String location = appendQuery(target, "error=" + urlEncode(e.getMessage()));
+            // Never put raw exception messages into URLs — log them server-side.
+            log.error("OAuth callback failed", e);
+            String location = appendQuery(target, "error=oauth_failed");
             return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(location)).build();
         }
     }

@@ -85,9 +85,8 @@ app:
       client-id: ${GITHUB_CLIENT_ID:}
       client-secret: ${GITHUB_CLIENT_SECRET:}
       # Public callback URL registered in the GitHub OAuth app.
-      # In production, register the Gateway's public URL as the callback:
-      #   https://<gateway-domain>/api/auth/oauth/github/callback
-      # The Gateway routes /api/auth/** to auth-service via Eureka.
+      # Production: https://git-insight-ai-one.vercel.app/api/auth/oauth/github/callback
+      # (Vercel /api proxy routes this to the Gateway → Auth Service)
       redirect-uri: ${GITHUB_OAUTH_REDIRECT_URI:http://localhost:8080/api/auth/oauth/github/callback}
       # Where the browser lands after a successful login (frontend token-consumer route).
       # Where the browser lands after a successful login (frontend token-consumer route).

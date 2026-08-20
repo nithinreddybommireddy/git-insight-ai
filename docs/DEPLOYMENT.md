@@ -121,10 +121,12 @@ SPRING_DATASOURCE_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}
 SPRING_DATASOURCE_USERNAME=${{Postgres.PGUSER}}
 SPRING_DATASOURCE_PASSWORD=${{Postgres.PGPASSWORD}}
 
-# Redis — copy from Railway's Redis service Variables tab.
-REDIS_HOST=${{Redis.REDIS_PRIVATE_URL}}
-REDIS_PORT=6379
-REDIS_PASSWORD=${{Redis.REDIS_PASSWORD}}
+# Redis — copy the actual variable names from Railway's Redis service Variables tab.
+# Railway Redis typically provides: REDISHOST, REDISPORT, REDISPASSWORD, REDIS_URL.
+# Use the private URL when available:
+REDIS_HOST=${{Redis.REDISHOST}}
+REDIS_PORT=${{Redis.REDISPORT}}
+REDIS_PASSWORD=${{Redis.REDISPASSWORD}}
 
 # Eureka — copy the actual Private Domain from the Eureka service's Settings tab.
 EUREKA_URL=http://<eureka-actual-private-domain>:8761/eureka/
@@ -169,6 +171,16 @@ GEMINI_API_KEY=<Gemini API key>
 # Internal — must match auth-service.
 INTERNAL_API_KEY=<same as auth-service>
 JWT_MIN_SECRET_BYTES=64
+```
+
+**Analytics Service (placeholder):**
+```
+# Currently a placeholder — only exposes health endpoint.
+# Deploy when real analytics endpoints are implemented.
+SPRING_DATASOURCE_URL=jdbc:postgresql://${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+SPRING_DATASOURCE_USERNAME=${{Postgres.PGUSER}}
+SPRING_DATASOURCE_PASSWORD=${{Postgres.PGPASSWORD}}
+EUREKA_URL=http://<eureka-actual-private-domain>:8761/eureka/
 ```
 
 ### GitHub OAuth configuration
@@ -222,15 +234,19 @@ is not a production deployment.
 
 ## Smoke-test after deploy
 
-With the production override, everything goes through nginx (no direct service
-ports are reachable):
+With the Vercel proxy architecture, the browser calls same-origin `/api/*`
+which Vercel rewrites to the Railway Gateway:
 
 ```bash
-curl -s https://<host>/api/health                      # github-service up (via nginx)
-curl -s "https://<host>/api/github/torvalds/score" | head -c 300   # analysis works
-curl -s -X POST https://<host>/api/auth/register \
+# Gateway health (direct — use the actual Gateway public domain)
+curl -i https://<gateway-domain>/actuator/health
+
+# Through Vercel proxy (use the Vercel frontend URL)
+curl -s "https://git-insight-ai-one.vercel.app/api/github/torvalds/score" | head -c 300
+
+curl -s -X POST https://git-insight-ai-one.vercel.app/api/auth/register \
   -H 'Content-Type: application/json' \
-  -d '{"email":"a@b.co","password":"Str0ng!Pass","name":"A"}'            # auth works
+  -d '{"email":"a@b.co","password":"Str0ng!Pass","name":"A"}'
 # Then log in, view the dashboard, and (if configured) complete GitHub OAuth.
 ```
 

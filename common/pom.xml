@@ -16,18 +16,18 @@
 
     <dependencies>
         <!--
-            Minimal Spring Web dependencies — NOT spring-boot-starter-web.
-            The starter pulls Tomcat which conflicts with the reactive API Gateway.
+            Minimal Spring Web dependency — NOT spring-boot-starter-web or spring-webmvc.
+            The starters pull Tomcat/MVC which conflict with the reactive API Gateway.
             Services that need Tomcat (auth, github, analytics) declare their own
             spring-boot-starter-web. The Gateway (reactive/Netty) does NOT.
+
+            spring-web provides: @RestControllerAdvice, @ExceptionHandler,
+            ResponseEntity, HttpMessageNotReadableException — all needed by
+            GlobalExceptionHandler. It does NOT pull in the servlet/MVC stack.
         -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-web</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-webmvc</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework</groupId>
@@ -47,7 +47,9 @@
             <artifactId>spring-security-web</artifactId>
         </dependency>
 
-        <!-- Servlet API — compile-only (provided at runtime by Tomcat/Undertow) -->
+        <!-- Servlet API — compile-only (provided at runtime by Tomcat/Undertow).
+             Required because common contains servlet-based filters (JwtAuthFilter,
+             CsrfCookieFilter) that extend OncePerRequestFilter. -->
         <dependency>
             <groupId>jakarta.servlet</groupId>
             <artifactId>jakarta.servlet-api</artifactId>
