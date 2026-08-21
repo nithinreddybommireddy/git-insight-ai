@@ -72,9 +72,11 @@ public class SecurityConfig {
                          */
                         .ignoringRequestMatchers(
                                 "/api/auth/**",
+                                "/api/recruiter/**",
                                 "/api/health",
                                 "/actuator/health"
                         )
+
                 )
 
                 // =========================================================

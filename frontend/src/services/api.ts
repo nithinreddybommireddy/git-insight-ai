@@ -7,10 +7,7 @@ const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined ?? "").rep
 
 const api = axios.create({
   baseURL: `${API_BASE}/api`,
-  headers: {
-    "Content-Type": "application/json",
-  },
-  // Session tokens ride in HttpOnly cookies (set by login/register/OAuth),
+   // Session tokens ride in HttpOnly cookies (set by login/register/OAuth),
   // so every request must send them. Nothing is stored in localStorage.
   withCredentials: true,
 });

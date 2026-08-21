@@ -114,25 +114,24 @@ services:
       context: .
       target: auth-service
     environment:
-      SPRING_DATASOURCE_URL: ${AUTH_DATABASE_URL:-jdbc:postgresql://postgres:5432/gitinsight_auth}
-      SPRING_DATASOURCE_USERNAME: ${DATABASE_USERNAME:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      EUREKA_URL: http://eureka-server:8761/eureka/
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
-      JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      GITHUB_SERVICE_URL: http://github-service:8081
-      # Shared secret used when calling github-service's internal AI endpoints
-      # (/api/ai/job-match). Must match INTERNAL_API_KEY on github-service.
-      INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
-      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
-      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
-      GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8080/api/auth/oauth/github/callback}
-      OAUTH_FRONTEND_REDIRECT_URI: ${OAUTH_FRONTEND_REDIRECT_URI:-http://localhost:5173/auth/callback}
-      # Cookie security: set AUTH_COOKIE_SECURE=true in production (Vercel proxy = same-origin, Lax works)
-      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
-      AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
+        SPRING_DATASOURCE_URL: ${AUTH_DATABASE_URL:-jdbc:postgresql://postgres:5432/gitinsight_auth}
+        SPRING_DATASOURCE_USERNAME: ${DATABASE_USERNAME:-postgres}
+        SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+        EUREKA_URL: http://eureka-server:8761/eureka/
+        JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
+        JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
+        REDIS_HOST: redis
+        REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+
+        APP_GITHUB_SERVICE_URL: http://github-service:8081
+        APP_INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
+
+        GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+        GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+        GITHUB_OAUTH_REDIRECT_URI: ${GITHUB_OAUTH_REDIRECT_URI:-http://localhost:8080/api/auth/oauth/github/callback}
+        OAUTH_FRONTEND_REDIRECT_URI: ${OAUTH_FRONTEND_REDIRECT_URI:-http://localhost:5173/auth/callback}
+        AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+        AUTH_COOKIE_SAME_SITE: ${AUTH_COOKIE_SAME_SITE:-Lax}
     ports:
       - "8083:8083"
     depends_on:

@@ -4,6 +4,7 @@ import com.gitinsight.authservice.dto.response.JobMatchResponse;
 import com.gitinsight.authservice.dto.response.JobMatchResponse.AiExplanation;
 import com.gitinsight.authservice.dto.response.JobMatchResponse.JobMatchCandidate;
 import com.gitinsight.common.dto.response.ApiResponse;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.slf4j.Logger;
@@ -14,6 +15,8 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
+import java.util.LinkedHashSet;
+import java.util.Set;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -24,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -62,6 +66,15 @@ public class JobMatcherService {
      *  cannot become a resource-exhaustion vector. */
     private static final int MAX_PDF_PAGES = 50;
 
+    /** Only inspect the most relevant repositories for source-level evidence. */
+    private static final int MAX_EVIDENCE_REPOS = 3;
+
+    /** Keep raw evidence bounded so one repository cannot dominate matching. */
+    private static final int MAX_EVIDENCE_CHARS_PER_FILE = 8_000;
+    private static final int MAX_TOTAL_EVIDENCE_PER_REPO = 24_000;
+
+    /** Small, high-signal files used for technology detection. */
+
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})");
 
     /**
@@ -74,16 +87,27 @@ public class JobMatcherService {
     private static final Map<String, Pattern> SKILL_PATTERNS = buildSkillPatterns();
 
     private final RestClient githubClient;
+    private final RestClient rawGithubClient;
+    private final ObjectMapper objectMapper;
+
+    /** Small per-process cache for public repository evidence to avoid repeated raw-file calls. */
+    private final Map<String, String> evidenceCache = new ConcurrentHashMap<>();
 
     @Autowired
-    public JobMatcherService(@Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl,
-                             @Value("${app.internal-api-key:}") String internalApiKey) {
-        this(buildClient(githubServiceUrl, internalApiKey));
+    public JobMatcherService(
+            @Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl,
+            @Value("${app.internal-api-key:}") String internalApiKey,
+            ObjectMapper objectMapper) {
+        this.githubClient = buildClient(githubServiceUrl, internalApiKey);
+        this.rawGithubClient = buildRawGithubClient();
+        this.objectMapper = objectMapper;
     }
 
     /** Package-private constructor for tests. */
     JobMatcherService(RestClient githubClient) {
         this.githubClient = githubClient;
+        this.rawGithubClient = buildRawGithubClient();
+        this.objectMapper = new ObjectMapper();
     }
 
     // ────────────────────────── Public API ──────────────────────────
@@ -277,11 +301,11 @@ public class JobMatcherService {
 
     private JobMatchCandidate analyzeCandidate(String username, List<String> required) {
         ScoreView score = fetch("/api/github/{u}/score", username, ScoreView.class);
-        ProfileView profile = fetch("/api/github/{u}/profile", username, ProfileView.class);
+        ProfileView profile = fetch("/api/github/profile/{u}", username, ProfileView.class);
         List<LanguageView> languages = fetchList("/api/github/{u}/languages/weighted", username, LanguageView.class);
         List<RepoView> repos = fetchList("/api/github/{u}/repos", username, RepoView.class);
 
-        String corpus = buildCandidateCorpus(profile, languages, repos);
+        String corpus = buildCandidateCorpus(username, profile, languages, repos, required);
 
         List<String> matched = required.stream().filter(s -> matches(corpus, s)).collect(Collectors.toList());
         List<String> missing = required.stream().filter(s -> !matched.contains(s)).collect(Collectors.toList());
@@ -306,39 +330,223 @@ public class JobMatcherService {
                 skillMatchPercent, matched, missing, topLanguages, topRepos);
     }
 
-    private String buildCandidateCorpus(ProfileView profile, List<LanguageView> languages, List<RepoView> repos) {
-        StringBuilder sb = new StringBuilder(512);
-        if (profile.bio() != null) sb.append(profile.bio()).append(' ');
-        for (LanguageView l : languages) sb.append(l.language()).append(' ');
-        for (RepoView r : repos) {
+    /**
+     * Build a deterministic skill corpus from public GitHub evidence.
+     * In addition to the existing profile/repository metadata, we inspect a small
+     * bounded set of README/build/deployment files from the top repositories.
+     * This is what lets the matcher detect technologies such as Spring Boot,
+     * REST APIs, Microservices and Docker even when they are not listed as topics.
+     */
+    private String buildCandidateCorpus(
+            String username,
+            ProfileView profile,
+            List<LanguageView> languages,
+            List<RepoView> repos,
+            List<String> required) {
+
+        StringBuilder sb = new StringBuilder(16_000);
+
+        if (profile != null && profile.bio() != null) {
+            sb.append(profile.bio()).append(' ');
+        }
+
+        for (LanguageView l : languages) {
+            if (l != null && l.language() != null) {
+                sb.append(l.language()).append(' ');
+            }
+        }
+
+        // Metadata is cheap and remains the primary evidence source.
+        List<RepoView> topRepos = repos.stream()
+                .filter(Objects::nonNull)
+                .sorted(Comparator.comparingInt(RepoView::stars).reversed())
+                .limit(MAX_EVIDENCE_REPOS)
+                .toList();
+
+        for (RepoView r : topRepos) {
             sb.append(r.name()).append(' ');
             if (r.description() != null) sb.append(r.description()).append(' ');
             if (r.language() != null) sb.append(r.language()).append(' ');
             if (r.topics() != null) sb.append(String.join(" ", r.topics())).append(' ');
+
+            String evidence = fetchRepositoryEvidence(username, r.name(), required);
+            if (!evidence.isBlank()) {
+                sb.append(' ').append(evidence).append(' ');
+            }
         }
+
         return sb.toString().toLowerCase(Locale.ROOT);
     }
 
     private <T> T fetch(String path, String username, Class<T> type) {
-        ApiResponse<T> response = githubClient.get()
+
+        ApiResponse<?> response = githubClient.get()
                 .uri(path, username)
                 .retrieve()
-                .body(new ParameterizedTypeReference<ApiResponse<T>>() {});
+                .body(new ParameterizedTypeReference<ApiResponse<Object>>() {});
+
         if (response == null || !response.isSuccess() || response.getData() == null) {
             throw new IllegalStateException("github-service returned no data for " + username);
         }
-        return response.getData();
+
+        return objectMapper.convertValue(response.getData(), type);
     }
 
     private <T> List<T> fetchList(String path, String username, Class<T> elementType) {
-        ApiResponse<List<T>> response = githubClient.get()
+
+        ApiResponse<?> response = githubClient.get()
                 .uri(path, username)
                 .retrieve()
-                .body(new ParameterizedTypeReference<ApiResponse<List<T>>>() {});
+                .body(new ParameterizedTypeReference<ApiResponse<Object>>() {});
+
         if (response == null || !response.isSuccess() || response.getData() == null) {
             return List.of();
         }
-        return response.getData();
+
+        return objectMapper.convertValue(
+                response.getData(),
+                objectMapper.getTypeFactory().constructCollectionType(List.class, elementType)
+        );
+    }
+
+    private static List<String> evidenceFilesFor(List<String> required) {
+        Set<String> files = new LinkedHashSet<>();
+        files.add("README.md");
+
+        Set<String> normalized = required == null
+                ? Set.of()
+                : required.stream()
+                .filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+
+        boolean javaEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("java") ||
+                        s.contains("spring") ||
+                        s.contains("hibernate") ||
+                        s.contains("microservice") ||
+                        s.contains("rest api") ||
+                        s.contains("quarkus") ||
+                        s.contains("micronaut"));
+
+        boolean javascriptEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("javascript") ||
+                        s.contains("typescript") ||
+                        s.equals("react") ||
+                        s.contains("node.js") ||
+                        s.contains("nodejs") ||
+                        s.contains("express"));
+
+        boolean dockerEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("docker") ||
+                        s.contains("kubernetes") ||
+                        s.contains("ci/cd"));
+
+        if (javaEcosystem) {
+            files.add("pom.xml");
+            files.add("build.gradle");
+            files.add("build.gradle.kts");
+        }
+
+        if (javascriptEcosystem) {
+            files.add("package.json");
+        }
+
+        if (dockerEcosystem) {
+            files.add("Dockerfile");
+            files.add("docker-compose.yml");
+        }
+
+        return List.copyOf(files);
+    }
+
+    private String fetchRepositoryEvidence(String owner, String repo, List<String> required) {
+        if (owner == null || owner.isBlank() || repo == null || repo.isBlank()) {
+            return "";
+        }
+
+        String cacheKey = owner + "/" + repo;
+        String cached = evidenceCache.get(cacheKey);
+        if (cached != null) {
+            return cached;
+        }
+
+        String bestEvidence = "";
+
+        // Public repos commonly use main or master. We stop on the first branch
+        // that gives us meaningful content, avoiding an expensive branch fan-out.
+        for (String branch : List.of("main", "master")) {
+            StringBuilder branchEvidence = new StringBuilder();
+
+            for (String file : evidenceFilesFor(required)) {
+                String content = fetchRawRepositoryFile(owner, repo, branch, file);
+                if (content.isBlank()) {
+                    continue;
+                }
+
+                branchEvidence.append("\n[file ")
+                        .append(file)
+                        .append("]\n")
+                        .append(content)
+                        .append('\n');
+            }
+
+            if (branchEvidence.length() > 0) {
+                bestEvidence = branchEvidence.toString();
+                break;
+            }
+        }
+
+        if (bestEvidence.length() > MAX_TOTAL_EVIDENCE_PER_REPO) {
+            bestEvidence = bestEvidence.substring(0, MAX_TOTAL_EVIDENCE_PER_REPO);
+        }
+
+        evidenceCache.put(cacheKey, bestEvidence);
+        return bestEvidence;
+    }
+
+    private String fetchRawRepositoryFile(String owner, String repo, String branch, String file) {
+        String key = owner + "/" + repo + "/" + branch + "/" + file;
+        String cached = evidenceCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+
+        try {
+            String content = rawGithubClient.get()
+                    .uri("/{owner}/{repo}/{branch}/{file}", owner, repo, branch, file)
+                    .retrieve()
+                    .body(String.class);
+
+            if (content == null) {
+                content = "";
+            }
+
+            content = content.length() > MAX_EVIDENCE_CHARS_PER_FILE
+                    ? content.substring(0, MAX_EVIDENCE_CHARS_PER_FILE)
+                    : content;
+
+            evidenceCache.put(key, content);
+            return content;
+
+        } catch (Exception e) {
+            // 404 is normal for optional files; any other transient failure should
+            // not make the candidate fail. We simply fall back to metadata evidence.
+            evidenceCache.put(key, "");
+            return "";
+        }
+    }
+
+    private static RestClient buildRawGithubClient() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(3_000);
+        factory.setReadTimeout(5_000);
+
+        return RestClient.builder()
+                .baseUrl("https://raw.githubusercontent.com")
+                .defaultHeader("Accept", "text/plain")
+                .requestFactory(factory)
+                .build();
     }
 
     private static RestClient buildClient(String baseUrl, String internalApiKey) {
@@ -424,7 +632,7 @@ public class JobMatcherService {
         skills.put("Perl", List.of("perl"));
         skills.put("Julia", List.of("julia"));
         // ── Frameworks & platforms ──
-        skills.put("Spring Boot", List.of("spring boot", "springboot", "spring framework", "spring mvc", "spring cloud", "spring security", "spring data"));
+        skills.put("Spring Boot", List.of("spring boot", "springboot", "spring-boot", "spring-boot-starter", "spring framework", "spring mvc", "spring cloud", "spring security", "spring data", "@springbootapplication"));
         skills.put("Hibernate", List.of("hibernate", "jpa"));
         skills.put("Node.js", List.of("node.js", "nodejs", "node js"));
         skills.put("Express", List.of("express.js", "expressjs", "express js"));
@@ -448,7 +656,7 @@ public class JobMatcherService {
         skills.put("jQuery", List.of("jquery"));
         skills.put("GraphQL", List.of("graphql"));
         skills.put("gRPC", List.of("grpc"));
-        skills.put("REST API", List.of("rest api", "restful", "rest apis", "rest services"));
+        skills.put("REST API", List.of("rest api", "restful", "rest apis", "rest services", "restcontroller", "rest controller", "@restcontroller", "requestmapping", "getmapping", "postmapping", "putmapping", "deletemapping"));
         // ── Data / ML / AI ──
         skills.put("Machine Learning", List.of("machine learning", "ml"));
         skills.put("Deep Learning", List.of("deep learning"));
@@ -486,7 +694,7 @@ public class JobMatcherService {
         skills.put("Neo4j", List.of("neo4j"));
         skills.put("ClickHouse", List.of("clickhouse"));
         // ── DevOps / Cloud ──
-        skills.put("Docker", List.of("docker", "docker compose", "docker-compose"));
+        skills.put("Docker", List.of("docker", "docker compose", "docker-compose", "dockerfile", "containerization", "containerized"));
         skills.put("Kubernetes", List.of("kubernetes", "k8s"));
         skills.put("Terraform", List.of("terraform"));
         skills.put("Ansible", List.of("ansible"));
@@ -510,7 +718,7 @@ public class JobMatcherService {
         skills.put("WebSockets", List.of("websocket", "websockets", "web socket"));
         skills.put("OAuth", List.of("oauth", "oauth2", "oauth 2"));
         skills.put("JWT", List.of("jwt", "json web token"));
-        skills.put("Microservices", List.of("microservice", "microservices", "micro-services"));
+        skills.put("Microservices", List.of("microservice", "microservices", "micro-services", "microservices architecture", "spring cloud", "spring-cloud", "eureka", "service discovery", "api gateway", "api-gateway"));
         // ── Testing ──
         skills.put("JUnit", List.of("junit"));
         skills.put("Jest", List.of("jest"));
