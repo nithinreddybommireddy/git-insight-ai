@@ -35,7 +35,7 @@ spring:
       max-request-size: 12MB
 
 server:
-  port: 8083
+  port: ${PORT:8083}
 
 eureka:
   client:

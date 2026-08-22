@@ -22,7 +22,7 @@ spring:
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 
 server:
-  port: 8082
+  port: ${PORT:8082}
 
 eureka:
   client:
