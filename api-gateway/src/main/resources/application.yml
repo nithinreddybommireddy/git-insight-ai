@@ -2,8 +2,6 @@ spring:
   application:
     name: api-gateway
 
-  # API Gateway should not enable Spring Boot's default reactive security.
-  # Authentication/authorization is handled by auth-service.
   autoconfigure:
     exclude:
       - org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration
@@ -11,12 +9,29 @@ spring:
 
   cloud:
     gateway:
+
+      globalcors:
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "https://git-insight-ai-one.vercel.app"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - PATCH
+              - DELETE
+              - OPTIONS
+            allowedHeaders:
+              - "*"
+            allowCredentials: true
+            maxAge: 3600
+
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
       routes:
-
-        # ── Auth Service ──────────────────────────────────────────────
         - id: auth-service
           uri: lb://AUTH-SERVICE
           predicates:
@@ -25,7 +40,6 @@ spring:
             response-timeout: 60000
             connect-timeout: 5000
 
-        # ── Recruiter Service (auth-service) ─────────────────────────
         - id: recruiter-service
           uri: lb://AUTH-SERVICE
           predicates:
@@ -34,7 +48,6 @@ spring:
             response-timeout: 60000
             connect-timeout: 5000
 
-        # ── Admin Service (auth-service) ─────────────────────────────
         - id: admin-service
           uri: lb://AUTH-SERVICE
           predicates:
@@ -43,7 +56,6 @@ spring:
             response-timeout: 60000
             connect-timeout: 5000
 
-        # ── GitHub Service ────────────────────────────────────────────
         - id: github-service
           uri: lb://GITHUB-SERVICE
           predicates:
@@ -52,7 +64,6 @@ spring:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── AI Service (github-service) ───────────────────────────────
         - id: ai-service
           uri: lb://GITHUB-SERVICE
           predicates:
@@ -61,7 +72,6 @@ spring:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── Reports Service (github-service) ──────────────────────────
         - id: reports-service
           uri: lb://GITHUB-SERVICE
           predicates:
@@ -70,7 +80,6 @@ spring:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── Analytics Service ─────────────────────────────────────────
         - id: analytics-service
           uri: lb://ANALYTICS-SERVICE
           predicates:
@@ -79,7 +88,6 @@ spring:
             response-timeout: 60000
             connect-timeout: 5000
 
-      # Global Gateway HTTP client timeouts
       httpclient:
         connect-timeout: 5000
         response-timeout: 60s
@@ -99,7 +107,6 @@ management:
     web:
       exposure:
         include: health,info
-
   endpoint:
     health:
       show-details: when_authorized
