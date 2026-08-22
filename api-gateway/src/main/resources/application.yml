@@ -7,6 +7,24 @@ spring:
       default-filters:
         - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
+      globalcors:
+        add-to-simple-url-handler-mapping: true
+        cors-configurations:
+          '[/**]':
+            allowedOrigins:
+              - "https://git-insight-ai-one.vercel.app"
+            allowedMethods:
+              - GET
+              - POST
+              - PUT
+              - DELETE
+              - PATCH
+              - OPTIONS
+            allowedHeaders:
+              - "*"
+            allowCredentials: true
+            maxAge: 3600
+
       routes:
         # ── Auth Service ──────────────────────────────────────────────
         - id: auth-service
@@ -62,7 +80,7 @@ spring:
             response-timeout: 120000
             connect-timeout: 5000
 
-        # ── Analytics Service (placeholder — currently only health) ───
+        # ── Analytics Service ─────────────────────────────────────────
         - id: analytics-service
           uri: lb://ANALYTICS-SERVICE
           predicates:
@@ -71,7 +89,6 @@ spring:
             response-timeout: 60000
             connect-timeout: 5000
 
-      # Global timeout defaults
       httpclient:
         connect-timeout: 5000
         response-timeout: 60s
