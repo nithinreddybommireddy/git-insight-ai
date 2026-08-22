@@ -2,6 +2,13 @@ spring:
   application:
     name: api-gateway
 
+  # API Gateway should not enable Spring Boot's default reactive security.
+  # Authentication/authorization is handled by auth-service.
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.security.reactive.ReactiveSecurityAutoConfiguration
+      - org.springframework.boot.autoconfigure.security.reactive.ReactiveUserDetailsServiceAutoConfiguration
+
   cloud:
     gateway:
       default-filters:
