@@ -54,6 +54,34 @@ function RequireAuth({ children }: { children: ReactNode }) {
 
   return <>{children}</>;
 }
+function RequireRole({
+  roles,
+  children,
+}: {
+  roles: string[];
+  children: ReactNode;
+}) {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  if (!roles.includes(user.role)) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <>{children}</>;
+}
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -108,17 +136,18 @@ function AppRoutes() {
           <Route
             path="/recruiter"
             element={
-              <RequireAuth>
+              <RequireRole roles={["RECRUITER", "ADMIN"]}>
                 <RecruiterDashboard />
-              </RequireAuth>
+              </RequireRole>
             }
           />
+
           <Route
             path="/recruiter/candidate/:username"
             element={
-              <RequireAuth>
+              <RequireRole roles={["RECRUITER", "ADMIN"]}>
                 <CandidateDetails />
-              </RequireAuth>
+              </RequireRole>
             }
           />
           <Route path="/org/:orgName" element={<OrgAnalytics />} />
@@ -190,5 +219,4 @@ function App() {
     </QueryClientProvider>
   );
 }
-
 export default App;
