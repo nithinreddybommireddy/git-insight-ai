@@ -10,112 +10,154 @@ spring:
   cloud:
     gateway:
 
-      globalcors:
-        add-to-simple-url-handler-mapping: true
-        cors-configurations:
-          '[/**]':
-            allowedOrigins:
-              - "https://git-insight-ai-one.vercel.app"
-            allowedMethods:
-              - GET
-              - POST
-              - PUT
-              - PATCH
-              - DELETE
-              - OPTIONS
-            allowedHeaders:
-              - "*"
-            allowCredentials: true
-            maxAge: 3600
+      # Native Spring Cloud Gateway CORS configuration
+      server:
+        webflux:
+          globalcors:
+            add-to-simple-url-handler-mapping: true
+            cors-configurations:
+              '[/**]':
+                allowedOrigins:
+                  - "https://git-insight-ai-one.vercel.app"
+                allowedMethods:
+                  - GET
+                  - POST
+                  - PUT
+                  - PATCH
+                  - DELETE
+                  - OPTIONS
+                allowedHeaders:
+                  - "*"
+                allowCredentials: true
+                maxAge: 3600
 
-      default-filters:
-        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
+          default-filters:
+            - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
-      routes:
-        - id: auth-service
-          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
-          predicates:
-            - Path=/api/auth/**
-          metadata:
-            response-timeout: 60000
+          routes:
+
+            # =========================
+            # AUTH SERVICE
+            # =========================
+            - id: auth-service
+              uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
+              predicates:
+                - Path=/api/auth/**
+              metadata:
+                response-timeout: 60000
+                connect-timeout: 5000
+
+            # =========================
+            # RECRUITER
+            # =========================
+            - id: recruiter-service
+              uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
+              predicates:
+                - Path=/api/recruiter/**
+              metadata:
+                response-timeout: 60000
+                connect-timeout: 5000
+
+            # =========================
+            # ADMIN
+            # =========================
+            - id: admin-service
+              uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
+              predicates:
+                - Path=/api/admin/**
+              metadata:
+                response-timeout: 60000
+                connect-timeout: 5000
+
+            # =========================
+            # GITHUB SERVICE
+            # =========================
+            - id: github-service
+              uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
+              predicates:
+                - Path=/api/github/**
+              metadata:
+                response-timeout: 120000
+                connect-timeout: 5000
+
+            # =========================
+            # AI SERVICE
+            # =========================
+            - id: ai-service
+              uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
+              predicates:
+                - Path=/api/ai/**
+              metadata:
+                response-timeout: 120000
+                connect-timeout: 5000
+
+            # =========================
+            # REPORTS SERVICE
+            # =========================
+            - id: reports-service
+              uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
+              predicates:
+                - Path=/api/reports/**
+              metadata:
+                response-timeout: 120000
+                connect-timeout: 5000
+
+            # =========================
+            # ANALYTICS SERVICE
+            # =========================
+            - id: analytics-service
+              uri: ${ANALYTICS_SERVICE_URL:https://git-insight-ai.onrender.com}
+              predicates:
+                - Path=/api/analytics/**
+              metadata:
+                response-timeout: 60000
+                connect-timeout: 5000
+
+          httpclient:
             connect-timeout: 5000
+            response-timeout: 60s
 
-        - id: recruiter-service
-          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
-          predicates:
-            - Path=/api/recruiter/**
-          metadata:
-            response-timeout: 60000
-            connect-timeout: 5000
-
-        - id: admin-service
-          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
-          predicates:
-            - Path=/api/admin/**
-          metadata:
-            response-timeout: 60000
-            connect-timeout: 5000
-
-        - id: github-service
-          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
-          predicates:
-            - Path=/api/github/**
-          metadata:
-            response-timeout: 120000
-            connect-timeout: 5000
-
-        - id: ai-service
-          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
-          predicates:
-            - Path=/api/ai/**
-          metadata:
-            response-timeout: 120000
-            connect-timeout: 5000
-
-        - id: reports-service
-          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
-          predicates:
-            - Path=/api/reports/**
-          metadata:
-            response-timeout: 120000
-            connect-timeout: 5000
-
-        - id: analytics-service
-          uri: ${ANALYTICS_SERVICE_URL:https://git-insight-ai.onrender.com}
-          predicates:
-            - Path=/api/analytics/**
-          metadata:
-            response-timeout: 60000
-            connect-timeout: 5000
-
-      httpclient:
-        connect-timeout: 5000
-        response-timeout: 60s
-
+# =====================================
+# EUREKA
+# =====================================
 eureka:
   client:
     service-url:
-      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
-  instance:
-    prefer-ip-address: true
+      defaultZone: ${EUREKA_URL:https://git-insight-eureka.onrender.com/eureka/}
 
+  instance:
+    prefer-ip-address: false
+
+# =====================================
+# SERVER
+# =====================================
 server:
   port: ${PORT:8080}
 
+# =====================================
+# ACTUATOR
+# =====================================
 management:
   endpoints:
     web:
       exposure:
         include: health,info
+
   endpoint:
     health:
       show-details: when_authorized
 
+# =====================================
+# JWT
+# =====================================
 app:
   jwt:
     secret: ${JWT_SECRET}
     min-secret-bytes: ${JWT_MIN_SECRET_BYTES:32}
 
+# =====================================
+# LOGGING
+# =====================================
 logging:
   level:
     org.springframework.cloud.gateway: INFO
