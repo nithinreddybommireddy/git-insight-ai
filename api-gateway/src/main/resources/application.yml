@@ -10,7 +10,8 @@ spring:
   cloud:
     gateway:
 
-      # Native Spring Cloud Gateway CORS configuration
+      # Spring Cloud Gateway CORS — env-driven so Render/Vercel can set the
+      # allowed origin without redeploying code.
       server:
         webflux:
           globalcors:
@@ -18,7 +19,7 @@ spring:
             cors-configurations:
               '[/**]':
                 allowedOrigins:
-                  - "https://git-insight-ai-one.vercel.app"
+                  - "${CORS_ALLOWED_ORIGINS:https://git-insight-ai-one.vercel.app}"
                 allowedMethods:
                   - GET
                   - POST
@@ -35,10 +36,7 @@ spring:
             - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_FIRST
 
           routes:
-
-            # =========================
-            # AUTH SERVICE
-            # =========================
+            # ── Auth Service ──────────────────────────────────────────────
             - id: auth-service
               uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
               predicates:
@@ -47,9 +45,7 @@ spring:
                 response-timeout: 60000
                 connect-timeout: 5000
 
-            # =========================
-            # RECRUITER
-            # =========================
+            # ── Recruiter Service (auth-service) ──────────────────────────
             - id: recruiter-service
               uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
               predicates:
@@ -58,9 +54,7 @@ spring:
                 response-timeout: 60000
                 connect-timeout: 5000
 
-            # =========================
-            # ADMIN
-            # =========================
+            # ── Admin Service (auth-service) ──────────────────────────────
             - id: admin-service
               uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
               predicates:
@@ -69,9 +63,7 @@ spring:
                 response-timeout: 60000
                 connect-timeout: 5000
 
-            # =========================
-            # GITHUB SERVICE
-            # =========================
+            # ── GitHub Service ────────────────────────────────────────────
             - id: github-service
               uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
               predicates:
@@ -80,9 +72,7 @@ spring:
                 response-timeout: 120000
                 connect-timeout: 5000
 
-            # =========================
-            # AI SERVICE
-            # =========================
+            # ── AI Service (github-service) ──────────────────────────────
             - id: ai-service
               uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
               predicates:
@@ -91,9 +81,7 @@ spring:
                 response-timeout: 120000
                 connect-timeout: 5000
 
-            # =========================
-            # REPORTS SERVICE
-            # =========================
+            # ── Reports Service (github-service) ─────────────────────────
             - id: reports-service
               uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
               predicates:
@@ -102,9 +90,7 @@ spring:
                 response-timeout: 120000
                 connect-timeout: 5000
 
-            # =========================
-            # ANALYTICS SERVICE
-            # =========================
+            # ── Analytics Service (placeholder — currently only health) ───
             - id: analytics-service
               uri: ${ANALYTICS_SERVICE_URL:https://git-insight-ai.onrender.com}
               predicates:
@@ -118,41 +104,33 @@ spring:
             response-timeout: 60s
 
 # =====================================
-# EUREKA
+# EUREKA — disabled by default for Render; set EUREKA_CLIENT_ENABLED=true for Docker Compose
 # =====================================
 eureka:
   client:
-   enabled: false
-# =====================================
-# SERVER
-# =====================================
+    enabled: ${EUREKA_CLIENT_ENABLED:false}
+  instance:
+    prefer-ip-address: ${EUREKA_PREFER_IP:false}
+
 server:
   port: ${PORT:8080}
 
-# =====================================
-# ACTUATOR
-# =====================================
 management:
   endpoints:
     web:
       exposure:
         include: health,info
-
   endpoint:
     health:
       show-details: when_authorized
 
-# =====================================
-# JWT
-# =====================================
 app:
+  cors:
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:https://git-insight-ai-one.vercel.app}
   jwt:
     secret: ${JWT_SECRET}
     min-secret-bytes: ${JWT_MIN_SECRET_BYTES:32}
 
-# =====================================
-# LOGGING
-# =====================================
 logging:
   level:
     org.springframework.cloud.gateway: INFO

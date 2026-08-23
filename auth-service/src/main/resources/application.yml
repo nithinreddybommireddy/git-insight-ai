@@ -39,12 +39,13 @@ server:
 
 eureka:
   client:
+    enabled: ${EUREKA_CLIENT_ENABLED:false}
     service-url:
       # EUREKA_URL is the production name; EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
       # (docker-compose) still overrides it via relaxed binding when set.
       defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
   instance:
-    prefer-ip-address: true
+    prefer-ip-address: ${EUREKA_PREFER_IP:false}
 
 app:
   cors:
