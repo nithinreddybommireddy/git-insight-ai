@@ -33,7 +33,7 @@ spring:
 
       routes:
         - id: auth-service
-          uri: lb://AUTH-SERVICE
+          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
           predicates:
             - Path=/api/auth/**
           metadata:
@@ -41,7 +41,7 @@ spring:
             connect-timeout: 5000
 
         - id: recruiter-service
-          uri: lb://AUTH-SERVICE
+          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
           predicates:
             - Path=/api/recruiter/**
           metadata:
@@ -49,7 +49,7 @@ spring:
             connect-timeout: 5000
 
         - id: admin-service
-          uri: lb://AUTH-SERVICE
+          uri: ${AUTH_SERVICE_URL:https://git-insight-auth.onrender.com}
           predicates:
             - Path=/api/admin/**
           metadata:
@@ -57,7 +57,7 @@ spring:
             connect-timeout: 5000
 
         - id: github-service
-          uri: lb://GITHUB-SERVICE
+          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
           predicates:
             - Path=/api/github/**
           metadata:
@@ -65,7 +65,7 @@ spring:
             connect-timeout: 5000
 
         - id: ai-service
-          uri: lb://GITHUB-SERVICE
+          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
           predicates:
             - Path=/api/ai/**
           metadata:
@@ -73,7 +73,7 @@ spring:
             connect-timeout: 5000
 
         - id: reports-service
-          uri: lb://GITHUB-SERVICE
+          uri: ${GITHUB_SERVICE_URL:https://gitinsight-github-service.onrender.com}
           predicates:
             - Path=/api/reports/**
           metadata:
@@ -81,7 +81,7 @@ spring:
             connect-timeout: 5000
 
         - id: analytics-service
-          uri: lb://ANALYTICS-SERVICE
+          uri: ${ANALYTICS_SERVICE_URL:https://git-insight-ai.onrender.com}
           predicates:
             - Path=/api/analytics/**
           metadata:
