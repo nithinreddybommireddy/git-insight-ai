@@ -9,8 +9,6 @@ eureka:
   client:
     register-with-eureka: false
     fetch-registry: false
-    service-url:
-      defaultZone: ${EUREKA_URL:https://git-insight-eureka.onrender.com/eureka/}
 
   server:
     enable-self-preservation: true
