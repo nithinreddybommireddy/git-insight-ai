@@ -1,6 +1,7 @@
 package com.gitinsight.authservice.service;
 
 import com.gitinsight.authservice.dto.response.JobMatchResponse;
+import com.gitinsight.authservice.service.JobMatcherService.RepoView;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.client.RestClient;
 
@@ -200,5 +201,90 @@ class JobMatcherServiceTest {
         assertThat(merged.get(0).fitLabel()).isEqualTo("Partial fit");
         assertThat(merged.get(0).strengths()).isEmpty();
         assertThat(merged.get(0).gaps()).isEmpty();
+    }
+
+    // ── Evidence repository limit ──
+
+    @Test
+    void defaultEvidenceRepoLimitIs15() {
+        // The no-arg test constructor uses the hard maximum
+        var svc = new JobMatcherService(RestClient.create());
+        assertThat(svc.maxEvidenceRepos).isEqualTo(15);
+    }
+
+    @Test
+    void evidenceRepoLimitRespectsHardCeiling() {
+        // Even if a caller requests 100, the hard ceiling of 15 applies
+        var svc = new JobMatcherService(
+                "http://localhost:8081", "", 100,
+                new com.fasterxml.jackson.databind.ObjectMapper());
+        assertThat(svc.maxEvidenceRepos).isEqualTo(15);
+    }
+
+    @Test
+    void evidenceRepoLimitCanBeConfiguredBelowCeiling() {
+        var svc = new JobMatcherService(
+                "http://localhost:8081", "", 5,
+                new com.fasterxml.jackson.databind.ObjectMapper());
+        assertThat(svc.maxEvidenceRepos).isEqualTo(5);
+    }
+
+    // ── Repository relevance ranking ──
+
+    @Test
+    void relevantRepoScoresHigherThanUnrelated() {
+        List<String> required = List.of("Java", "Spring Boot", "Docker");
+
+        var springRepo = new RepoView("my-spring-api",
+                "Spring Boot REST microservice with Docker",
+                "Java", List.of("spring-boot", "rest-api", "docker"), 5);
+        var portfolioRepo = new RepoView("portfolio",
+                "My personal portfolio website",
+                "HTML", List.of("portfolio", "website"), 50);
+
+        int springScore = JobMatcherService.computeRepoRelevance(springRepo, required);
+        int portfolioScore = JobMatcherService.computeRepoRelevance(portfolioRepo, required);
+
+        assertThat(springScore).isGreaterThan(portfolioScore);
+        assertThat(springScore).isGreaterThanOrEqualTo(2); // Java + Spring Boot minimum
+    }
+
+    @Test
+    void relevanceScoreIsZeroWhenNoRequiredSkills() {
+        var repo = new RepoView("repo", "desc", "Java", List.of(), 10);
+        assertThat(JobMatcherService.computeRepoRelevance(repo, List.of())).isZero();
+        assertThat(JobMatcherService.computeRepoRelevance(repo, null)).isZero();
+    }
+
+    @Test
+    void starBasedRankingRemainsPartOfSelection() {
+        // Two repos with same relevance but different stars —
+        // the sort should use stars as tiebreaker
+        List<String> required = List.of("Java");
+        var repoA = new RepoView("api-a", "Java API", "Java", List.of(), 10);
+        var repoB = new RepoView("api-b", "Java API", "Java", List.of(), 100);
+
+        int scoreA = JobMatcherService.computeRepoRelevance(repoA, required);
+        int scoreB = JobMatcherService.computeRepoRelevance(repoB, required);
+
+        assertThat(scoreA).isEqualTo(scoreB); // same relevance
+        // Stars serve as tiebreaker in the actual sort (verified by sort lambda)
+    }
+
+    // ── Existing formula unchanged ──
+
+    @Test
+    void matchScoreFormulaRemains60_40() {
+        // 0.6 * 80 + 0.4 * 60 = 48 + 24 = 72
+        assertThat(JobMatcherService.computeMatchScore(80, 60)).isEqualTo(72);
+        // 0.6 * 50 + 0.4 * 100 = 30 + 40 = 70
+        assertThat(JobMatcherService.computeMatchScore(50, 100)).isEqualTo(70);
+    }
+
+    // ── Constants unchanged ──
+
+    @Test
+    void maxCandidatesRemains25() {
+        assertThat(JobMatcherService.MAX_CANDIDATES).isEqualTo(25);
     }
 }

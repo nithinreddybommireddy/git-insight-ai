@@ -67,7 +67,8 @@ public class JobMatcherService {
     private static final int MAX_PDF_PAGES = 50;
 
     /** Only inspect the most relevant repositories for source-level evidence. */
-    private static final int MAX_EVIDENCE_REPOS = 3;
+    private static final int HARD_MAX_EVIDENCE_REPOS = 15;
+    final int maxEvidenceRepos;
 
     /** Keep raw evidence bounded so one repository cannot dominate matching. */
     private static final int MAX_EVIDENCE_CHARS_PER_FILE = 8_000;
@@ -97,10 +98,12 @@ public class JobMatcherService {
     public JobMatcherService(
             @Value("${app.github-service-url:http://localhost:8081}") String githubServiceUrl,
             @Value("${app.internal-api-key:}") String internalApiKey,
+            @Value("${app.job-matching.max-evidence-repos:${JOB_MATCHING_MAX_EVIDENCE_REPOS:15}}") int maxEvidenceRepos,
             ObjectMapper objectMapper) {
         this.githubClient = buildClient(githubServiceUrl, internalApiKey);
         this.rawGithubClient = buildRawGithubClient();
         this.objectMapper = objectMapper;
+        this.maxEvidenceRepos = Math.min(maxEvidenceRepos, HARD_MAX_EVIDENCE_REPOS);
     }
 
     /** Package-private constructor for tests. */
@@ -108,6 +111,7 @@ public class JobMatcherService {
         this.githubClient = githubClient;
         this.rawGithubClient = buildRawGithubClient();
         this.objectMapper = new ObjectMapper();
+        this.maxEvidenceRepos = HARD_MAX_EVIDENCE_REPOS;
     }
 
     // ────────────────────────── Public API ──────────────────────────
@@ -357,10 +361,14 @@ public class JobMatcherService {
         }
 
         // Metadata is cheap and remains the primary evidence source.
+        // Repos are ranked by relevance to required skills (metadata match)
+        // then by stars as a tiebreaker, so skill-relevant repos are inspected first.
         List<RepoView> topRepos = repos.stream()
                 .filter(Objects::nonNull)
-                .sorted(Comparator.comparingInt(RepoView::stars).reversed())
-                .limit(MAX_EVIDENCE_REPOS)
+                .sorted(Comparator
+                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, required))
+                        .thenComparingInt(r -> -r.stars()))
+                .limit(maxEvidenceRepos)
                 .toList();
 
         for (RepoView r : topRepos) {
@@ -409,6 +417,33 @@ public class JobMatcherService {
         );
     }
 
+    /**
+     * Score how relevant a repository is to the required skills based on
+     * its name, description, primary language, and topics.
+     * Higher score = more relevant = inspected first for evidence.
+     */
+    static int computeRepoRelevance(RepoView repo, List<String> required) {
+        if (required == null || required.isEmpty() || repo == null) return 0;
+        int score = 0;
+        Set<String> keywords = new java.util.HashSet<>();
+        if (repo.name() != null) keywords.add(repo.name().toLowerCase(Locale.ROOT));
+        if (repo.description() != null) keywords.add(repo.description().toLowerCase(Locale.ROOT));
+        if (repo.language() != null) keywords.add(repo.language().toLowerCase(Locale.ROOT));
+        if (repo.topics() != null) {
+            for (String t : repo.topics()) {
+                if (t != null) keywords.add(t.toLowerCase(Locale.ROOT));
+            }
+        }
+        String joined = String.join(" ", keywords);
+        for (String skill : required) {
+            Pattern p = SKILL_PATTERNS.get(skill);
+            if (p != null && p.matcher(joined).find()) {
+                score++;
+            }
+        }
+        return score;
+    }
+
     private static List<String> evidenceFilesFor(List<String> required) {
         Set<String> files = new LinkedHashSet<>();
         files.add("README.md");
@@ -446,6 +481,9 @@ public class JobMatcherService {
             files.add("pom.xml");
             files.add("build.gradle");
             files.add("build.gradle.kts");
+            files.add("application.yml");
+            files.add("application.yaml");
+            files.add("application.properties");
         }
 
         if (javascriptEcosystem) {
@@ -455,6 +493,7 @@ public class JobMatcherService {
         if (dockerEcosystem) {
             files.add("Dockerfile");
             files.add("docker-compose.yml");
+            files.add("docker-compose.yaml");
         }
 
         return List.copyOf(files);
