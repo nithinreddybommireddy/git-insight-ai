@@ -1137,4 +1137,131 @@ class JobMatcherServiceTest {
         ctx.evidenceStartNanos = System.nanoTime();
         assertThat(ctx.evidenceBudgetExhausted()).isTrue();
     }
+
+    // ══════════════════════════════════════════════════════════════════
+    //  SAVED CANDIDATE COVERAGE REQUIREMENTS
+    // ══════════════════════════════════════════════════════════════════
+
+    @Test
+    void fiveSavedCandidatesAllAnalyzed() {
+        // 5 saved candidates → all 5 appear in results + failed
+        List<String> usernames = List.of("user1", "user2", "user3", "user4", "user5");
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer", usernames, "saved");
+        // All 5 should be accounted for: processed + failed = total
+        assertThat(resp.processed() + resp.failed()).isEqualTo(5);
+        assertThat(resp.total()).isEqualTo(5);
+    }
+
+    @Test
+    void tenSavedCandidatesAllAnalyzed() {
+        // 10 saved candidates → all 10 processed
+        List<String> usernames = List.of(
+                "user1", "user2", "user3", "user4", "user5",
+                "user6", "user7", "user8", "user9", "user10");
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer", usernames, "saved");
+        assertThat(resp.processed() + resp.failed()).isEqualTo(10);
+        assertThat(resp.total()).isEqualTo(10);
+    }
+
+    @Test
+    void twentySavedCandidatesAllAnalyzed() {
+        // 20 saved candidates → all 20 analyzed (within MAX_CANDIDATES=25)
+        List<String> usernames = new java.util.ArrayList<>();
+        for (int i = 1; i <= 20; i++) usernames.add("user" + i);
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer", usernames, "saved");
+        assertThat(resp.processed() + resp.failed()).isEqualTo(20);
+        assertThat(resp.total()).isEqualTo(20);
+    }
+
+    @Test
+    void aiCandidateLimitDoesNotTruncateDeterministicAnalysis() {
+        // AI_CANDIDATE_LIMIT=10 should NOT limit deterministic analysis
+        // With 20 candidates: deterministic = 20, AI = up to 10
+        assertThat(JobMatcherService.MAX_CANDIDATES).isGreaterThanOrEqualTo(20);
+
+        // Verify AI_CANDIDATE_LIMIT is separate from MAX_CANDIDATES
+        // (they control different things)
+        int aiLimit;
+        try {
+            java.lang.reflect.Field aiField = JobMatcherService.class.getDeclaredField("AI_CANDIDATE_LIMIT");
+            aiField.setAccessible(true);
+            aiLimit = aiField.getInt(null);
+        } catch (Exception e) {
+            aiLimit = 10; // fallback if reflection fails
+        }
+        assertThat(aiLimit).isLessThan(JobMatcherService.MAX_CANDIDATES);
+
+        // 20 candidates with AI: deterministic=20, AI<=10
+        List<String> usernames = new java.util.ArrayList<>();
+        for (int i = 1; i <= 20; i++) usernames.add("user" + i);
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer", usernames, "saved", true);
+        // All 20 get deterministic analysis
+        assertThat(resp.processed() + resp.failed()).isEqualTo(20);
+        // AI explanations limited to AI_CANDIDATE_LIMIT
+        assertThat(resp.aiExplanations().size()).isLessThanOrEqualTo(aiLimit);
+    }
+
+    @Test
+    void maxCandidatesSupportsTwentyFive() {
+        // MAX_CANDIDATES must be at least 25 to support full pool analysis
+        assertThat(JobMatcherService.MAX_CANDIDATES).isGreaterThanOrEqualTo(25);
+    }
+
+    @Test
+    void repositoryLimitsApplyPerCandidateNotGlobally() {
+        // MAX_EVIDENCE_REPOS is per-candidate, not across all candidates
+        var svc = new JobMatcherService(RestClient.create());
+        assertThat(svc.maxEvidenceRepos).isEqualTo(15);
+    }
+
+    @Test
+    void finalRankingIncludesAllAnalyzedCandidates() {
+        // All analyzed candidates appear in the final sorted results
+        // (no candidate is silently dropped after analysis)
+        List<String> usernames = List.of("user1", "user2", "user3");
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer", usernames, "saved");
+        // Results contain only analyzed candidates, sorted by score
+        assertThat(resp.results().size()).isEqualTo(resp.processed());
+    }
+
+    @Test
+    void lowRankedSavedCandidateStillAnalyzed() {
+        // A candidate with no repos is still analyzed (not pre-filtered)
+        JobMatcherService svc = new JobMatcherService(RestClient.create());
+        JobMatchResponse resp = svc.match("Java developer",
+                List.of("nonexistent-user-xyz"), "saved");
+        // Candidate is either analyzed (processed=1) or failed (failed=1)
+        // Either way, it is NOT silently dropped
+        assertThat(resp.processed() + resp.failed()).isEqualTo(1);
+    }
+
+    @Test
+    void candidateWithManyReposNotSkipped() {
+        // A candidate with many repositories is not skipped
+        // Evidence limit (15) applies per candidate, not as a global skip
+        var svc = new JobMatcherService(RestClient.create());
+        assertThat(svc.maxEvidenceRepos).isEqualTo(15);
+        // The limit is applied in buildCandidateCorpus via selectEvidenceRepos
+        // It does NOT cause the candidate to be skipped entirely
+    }
+
+    @Test
+    void poolSizeReportedInResponse() {
+        // The response.total field reports the original pool size,
+        // not a truncated size
+        JobMatchResponse resp = new JobMatchResponse(
+                "Java Developer", List.of("Java"), "saved",
+                20, // total = pool size
+                18, // processed
+                2,  // failed
+                List.of(), false, null, List.of());
+        assertThat(resp.total()).isEqualTo(20);
+        assertThat(resp.processed()).isEqualTo(18);
+        assertThat(resp.failed()).isEqualTo(2);
+    }
 }

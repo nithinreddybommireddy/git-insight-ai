@@ -1,16 +1,21 @@
 package com.gitinsight.authservice.controller;
 
+import com.gitinsight.authservice.dto.response.JobMatchJobStatus;
+import com.gitinsight.authservice.dto.response.JobMatchJobSummary;
 import com.gitinsight.authservice.dto.response.JobMatchResponse;
+import com.gitinsight.authservice.entity.JobMatchJob;
 import com.gitinsight.authservice.entity.RecruiterNote;
 import com.gitinsight.authservice.entity.SavedCandidate;
 import com.gitinsight.authservice.entity.User;
 import com.gitinsight.authservice.repository.RecruiterNoteRepository;
 import com.gitinsight.authservice.repository.SavedCandidateRepository;
 import com.gitinsight.authservice.repository.UserRepository;
+import com.gitinsight.authservice.service.JobMatchJobService;
 import com.gitinsight.authservice.service.JobMatcherService;
 import com.gitinsight.common.dto.response.ApiResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -35,15 +40,18 @@ public class RecruiterController {
     private final RecruiterNoteRepository recruiterNoteRepository;
     private final UserRepository userRepository;
     private final JobMatcherService jobMatcherService;
+    private final JobMatchJobService jobMatchJobService;
 
     public RecruiterController(SavedCandidateRepository savedCandidateRepository,
                                 RecruiterNoteRepository recruiterNoteRepository,
                                 UserRepository userRepository,
-                                JobMatcherService jobMatcherService) {
+                                JobMatcherService jobMatcherService,
+                                JobMatchJobService jobMatchJobService) {
         this.savedCandidateRepository = savedCandidateRepository;
         this.recruiterNoteRepository = recruiterNoteRepository;
         this.userRepository = userRepository;
         this.jobMatcherService = jobMatcherService;
+        this.jobMatchJobService = jobMatchJobService;
     }
 
     private User getRecruiter(Authentication auth) {
@@ -126,6 +134,112 @@ public class RecruiterController {
     }
 
     private ResponseEntity<ApiResponse<JobMatchResponse>> badRequest(String message) {
+        return ResponseEntity.badRequest().body(new ApiResponse<>(false, message, null));
+    }
+
+    // ── Async Job-Description Match ──
+
+    /**
+     * Start an asynchronous job match. Returns immediately with a job ID.
+     * The frontend polls GET /match/{jobId} for progress and results.
+     */
+    @PostMapping(value = "/match/async", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<ApiResponse<JobMatchJobStatus>> matchByJobDescriptionAsync(
+            Authentication auth,
+            @RequestPart("file") MultipartFile jobDescriptionFile,
+            @RequestPart(value = "usernames", required = false) MultipartFile usernamesFile,
+            @RequestParam(value = "ai", required = false, defaultValue = "false") boolean includeAi) {
+
+        try {
+            if (jobDescriptionFile == null || jobDescriptionFile.isEmpty()) {
+                return badRequestAsync("Job description file is empty.");
+            }
+            if (jobDescriptionFile.getSize() > MAX_JOB_DESCRIPTION_BYTES) {
+                return badRequestAsync("Job description file must be under 5 MB.");
+            }
+
+            String jdText = jobMatcherService.extractText(
+                    jobDescriptionFile.getOriginalFilename(), jobDescriptionFile.getBytes());
+            if (jdText == null || jdText.isBlank()) {
+                return badRequestAsync("Could not read any text from the job description file.");
+            }
+
+            User recruiter = getRecruiter(auth);
+            List<String> usernames;
+            String source;
+            if (usernamesFile != null && !usernamesFile.isEmpty()) {
+                if (usernamesFile.getSize() > MAX_JOB_DESCRIPTION_BYTES) {
+                    return badRequestAsync("Usernames file must be under 5 MB.");
+                }
+                usernames = jobMatcherService.parseUsernames(
+                        jobMatcherService.readText(usernamesFile.getBytes()));
+                source = "file";
+            } else {
+                usernames = savedCandidateRepository.findByRecruiterOrderByCreatedAtDesc(recruiter)
+                        .stream()
+                        .map(SavedCandidate::getCandidateUsername)
+                        .toList();
+                source = "saved";
+            }
+
+            List<String> pool = usernames.stream()
+                    .distinct()
+                    .limit(JobMatcherService.MAX_CANDIDATES)
+                    .toList();
+
+            if (pool.isEmpty()) {
+                return badRequestAsync("No candidates to match — upload a usernames file or save candidates first.");
+            }
+
+            List<String> requiredSkills = jobMatcherService.extractRequiredSkills(jdText);
+
+            JobMatchJob job = jobMatchJobService.createAndEnqueue(
+                    recruiter, jdText, pool, source, includeAi, requiredSkills);
+
+            JobMatchJobStatus status = jobMatchJobService.getStatus(job.getId(), recruiter);
+            return ResponseEntity.status(HttpStatus.ACCEPTED)
+                    .body(new ApiResponse<>(true, "Job match started", status));
+
+        } catch (IllegalArgumentException ex) {
+            log.warn("Async job match rejected: {}", ex.getMessage());
+            return badRequestAsync(ex.getMessage());
+        } catch (Exception ex) {
+            log.error("Async job match creation failed", ex);
+            return ResponseEntity.internalServerError().body(new ApiResponse<>(false,
+                    "Job match could not be started. Please try again.", null));
+        }
+    }
+
+    /**
+     * Poll the status/results of an async job match.
+     */
+    @GetMapping("/match/{jobId}")
+    public ResponseEntity<ApiResponse<JobMatchJobStatus>> getJobMatchStatus(
+            Authentication auth,
+            @PathVariable Long jobId) {
+
+        User recruiter = getRecruiter(auth);
+        JobMatchJobStatus status = jobMatchJobService.getStatus(jobId, recruiter);
+        if (status == null) {
+            return ResponseEntity.status(404)
+                    .body(new ApiResponse<>(false, "Job match not found", null));
+        }
+        return ResponseEntity.ok(new ApiResponse<>(true, "Job match status fetched", status));
+    }
+
+    /**
+     * List recent job match history for the authenticated recruiter.
+     */
+    @GetMapping("/match")
+    public ResponseEntity<ApiResponse<List<JobMatchJobSummary>>> getJobMatchHistory(
+            Authentication auth) {
+
+        User recruiter = getRecruiter(auth);
+        List<JobMatchJobSummary> history = jobMatchJobService.getHistory(recruiter);
+        return ResponseEntity.ok(new ApiResponse<>(true, "Job match history fetched", history));
+    }
+
+    private ResponseEntity<ApiResponse<JobMatchJobStatus>> badRequestAsync(String message) {
         return ResponseEntity.badRequest().body(new ApiResponse<>(false, message, null));
     }
 

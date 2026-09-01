@@ -247,7 +247,31 @@ public class JobMatcherService {
         MatchContext ctx = new MatchContext(
                 System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(GLOBAL_MATCH_TIME_MS),
                 REQUEST_BUDGET_PER_CANDIDATE);
+        return matchInternal(jdText, usernames, source, includeAi, ctx);
+    }
 
+    /**
+     * Asynchronous match mode: processes ALL candidates without a global HTTP
+     * deadline. Per-candidate evidence budgets and request counts still apply.
+     * Used by the async job-match worker — the 50s Gateway timeout is irrelevant
+     * because this runs on a background thread.
+     */
+    public JobMatchResponse matchAsync(String jdText, List<String> usernames, String source, boolean includeAi) {
+        // Use Long.MAX_VALUE as deadline — effectively no global time limit.
+        // Per-candidate evidence time and request budget still apply.
+        MatchContext ctx = new MatchContext(
+                Long.MAX_VALUE,
+                REQUEST_BUDGET_PER_CANDIDATE);
+        return matchInternal(jdText, usernames, source, includeAi, ctx);
+    }
+
+    /**
+     * Shared core logic for both sync and async matching. The only difference
+     * is the {@code MatchContext} deadline: sync mode uses a 50s global
+     * deadline; async mode uses {@code Long.MAX_VALUE}.
+     */
+    private JobMatchResponse matchInternal(String jdText, List<String> usernames, String source,
+                                           boolean includeAi, MatchContext ctx) {
         List<String> required = extractRequiredSkills(jdText);
         List<JobMatchCandidate> results = new ArrayList<>();
         int failed = 0;
@@ -503,10 +527,66 @@ public class JobMatcherService {
     }
 
     /**
+     * Language → ecosystem mapping for exploration eligibility.
+     * A repo whose language is in this set is considered a plausible
+     * candidate for the corresponding ecosystem, even if its metadata
+     * keywords don't match required skills.
+     */
+    private static final Map<String, Set<String>> LANGUAGE_ECOSYSTEMS;
+    static {
+        Map<String, Set<String>> m = new java.util.LinkedHashMap<>();
+        m.put("Java", Set.of("java", "spring", "hibernate", "microservice", "rest api", "quarkus", "micronaut"));
+        m.put("JavaScript", Set.of("javascript", "node.js", "nodejs", "react", "vue", "angular", "express"));
+        m.put("TypeScript", Set.of("javascript", "typescript", "node.js", "nodejs", "react", "vue", "angular", "next.js"));
+        m.put("Python", Set.of("python", "django", "flask", "fastapi", "machine learning", "data science"));
+        m.put("Go", Set.of("go", "golang", "kubernetes", "docker", "microservice"));
+        m.put("Rust", Set.of("rust", "systems"));
+        m.put("Ruby", Set.of("ruby", "rails"));
+        m.put("PHP", Set.of("php", "laravel"));
+        m.put("C#", Set.of("c#", ".net", "asp.net"));
+        m.put("Kotlin", Set.of("kotlin", "java", "spring", "android"));
+        m.put("Swift", Set.of("swift", "ios"));
+        m.put("Shell", Set.of("docker", "ci/cd", "devops", "bash"));
+        m.put("Dockerfile", Set.of("docker", "ci/cd", "devops"));
+        m.put("HTML", Set.of("react", "vue", "angular", "frontend"));
+        LANGUAGE_ECOSYSTEMS = java.util.Collections.unmodifiableMap(m);
+    }
+
+    /**
+     * Check whether a repository's language makes it an ecosystem-compatible
+     * candidate for any of the required skills.
+     */
+    private static boolean isEcosystemCompatible(RepoView repo, Set<String> normalizedRequired) {
+        if (repo == null || repo.language() == null) return false;
+        Set<String> ecosystemSkills = LANGUAGE_ECOSYSTEMS.get(repo.language());
+        if (ecosystemSkills == null) return false;
+        return normalizedRequired.stream().anyMatch(ecosystemSkills::contains);
+    }
+
+    /**
+     * Check whether a repository has technical/project signals (non-trivial
+     * code: has description, topics, stars, or is a known project pattern).
+     */
+    private static boolean hasProjectSignals(RepoView repo) {
+        if (repo == null) return false;
+        if (repo.stars() > 0) return true;
+        if (repo.description() != null && !repo.description().isBlank()) return true;
+        if (repo.topics() != null && !repo.topics().isEmpty()) return true;
+        return false;
+    }
+
+    /**
      * Build a deterministic skill corpus from public GitHub evidence.
-     * In addition to the existing profile/repository metadata, we inspect a small
-     * bounded set of README/build/deployment files and high-signal source files
-     * from the top repositories.
+     *
+     * <p>Repository selection uses a TWO-STAGE strategy:
+     * <ol>
+     *   <li><b>Metadata relevance:</b> repos ranked by keyword match to required skills</li>
+     *   <li><b>Exploration quota:</b> reserve {@link #EXPLORATION_SLOTS} slots for
+     *       ecosystem-compatible repos with weak metadata but strong project signals</li>
+     * </ol>
+     *
+     * <p>Exploration slots ensure a generic Java repo with @RestController source
+     * code is not excluded solely because its name/description doesn't mention REST.
      */
     private String buildCandidateCorpus(
             String username,
@@ -529,20 +609,18 @@ public class JobMatcherService {
             }
         }
 
-        // Metadata is cheap and remains the primary evidence source.
-        // Repos are ranked by relevance to required skills (metadata match)
-        // then by stars as a tiebreaker, so skill-relevant repos are inspected first.
-        List<RepoView> topRepos = repos.stream()
-                .filter(Objects::nonNull)
-                .sorted(Comparator
-                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, required))
-                        .thenComparingInt(r -> -r.stars()))
-                .limit(maxEvidenceRepos)
-                .toList();
+        // ── Two-stage repository selection ──
+        Set<String> normalizedRequired = required == null ? Set.of()
+                : required.stream().filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
 
-        stats.reposAttempted = topRepos.size();
+        List<RepoView> selected = selectEvidenceRepos(repos, required, normalizedRequired);
+        stats.reposAttempted = selected.size();
 
-        for (RepoView r : topRepos) {
+        log.debug("JobMatch candidate={} reposReturned={} metadataPool={} evidenceRepos={}",
+                username, repos.size(), repos.size(), selected.size());
+
+        for (RepoView r : selected) {
             sb.append(r.name()).append(' ');
             if (r.description() != null) sb.append(r.description()).append(' ');
             if (r.language() != null) sb.append(r.language()).append(' ');
@@ -558,6 +636,68 @@ public class JobMatcherService {
         }
 
         return sb.toString().toLowerCase(Locale.ROOT);
+    }
+
+    /**
+     * Slots reserved for exploration: repos with weak metadata but strong
+     * ecosystem/project signals. Ensures generic repos with relevant source
+     * code are not excluded solely because their name/description lacks keywords.
+     */
+    static final int EXPLORATION_SLOTS = 5;
+
+    /**
+     * Two-stage repository selection.
+     *
+     * <p>Stage 1: Score all repos by metadata keyword relevance.
+     * <p>Stage 2: Fill up to {@link #maxEvidenceRepos} slots. Majority from
+     * highest metadata relevance; remaining from ecosystem-compatible repos
+     * with project signals (deterministic — no randomness).
+     *
+     * @return selected repos, never exceeding maxEvidenceRepos
+     */
+    static List<RepoView> selectEvidenceRepos(
+            List<RepoView> allRepos, List<String> required, Set<String> normalizedRequired) {
+        if (allRepos == null || allRepos.isEmpty()) return List.of();
+        List<RepoView> nonNull = allRepos.stream().filter(Objects::nonNull).toList();
+        if (nonNull.isEmpty()) return List.of();
+
+        // Stage 1: score all repos by metadata keyword relevance
+        List<RepoView> ranked = nonNull.stream()
+                .sorted(Comparator
+                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, required))
+                        .thenComparingInt(RepoView::stars)
+                        .reversed())
+                .toList();
+
+        int limit = Math.min(nonNull.size(), HARD_MAX_EVIDENCE_REPOS);
+
+        // Stage 2: select top metadata-relevant, fill remaining with exploration
+        int metadataSlots = Math.max(1, limit - EXPLORATION_SLOTS);
+        Set<String> selectedNames = new LinkedHashSet<>();
+        List<RepoView> selected = new ArrayList<>();
+
+        // Majority: highest metadata relevance
+        for (RepoView r : ranked) {
+            if (selected.size() >= metadataSlots) break;
+            if (selectedNames.add(r.name())) selected.add(r);
+        }
+
+        // Exploration: ecosystem-compatible repos with project signals, not already selected
+        for (RepoView r : ranked) {
+            if (selected.size() >= limit) break;
+            if (selectedNames.contains(r.name())) continue;
+            if (isEcosystemCompatible(r, normalizedRequired) && hasProjectSignals(r)) {
+                if (selectedNames.add(r.name())) selected.add(r);
+            }
+        }
+
+        // If still under limit, fill with remaining ranked repos
+        for (RepoView r : ranked) {
+            if (selected.size() >= limit) break;
+            if (selectedNames.add(r.name())) selected.add(r);
+        }
+
+        return List.copyOf(selected);
     }
 
     /**
@@ -776,28 +916,31 @@ public class JobMatcherService {
         }
 
         List<String> branches = buildBranchPriority(defaultBranch);
-        String bestEvidence = "";
+        StringBuilder combinedEvidence = new StringBuilder();
         String branchUsed = "";
         int totalFound = 0;
         int totalMissing = 0;
+        List<String> branchesChecked = new ArrayList<>();
 
         // Track confirmed skills ACROSS all branch attempts.
         // Once a skill is confirmed from any branch's evidence, it stays confirmed.
-        // Stopping is based on skill confirmation, not file existence.
+        // Stopping is based ONLY on ALL required skills being confirmed.
         Set<String> confirmedSkills = new HashSet<>();
 
         for (String branch : branches) {
             if (ctx.evidenceBudgetExhausted()) break;
 
-            // If ALL required skills are already confirmed from a previous branch, skip
+            // Skip branch only if ALL required skills are already confirmed
             boolean allSkillsConfirmed = !required.isEmpty()
                     && required.stream().allMatch(confirmedSkills::contains);
             if (allSkillsConfirmed) break;
 
+            branchesChecked.add(branch);
             StringBuilder branchEvidence = new StringBuilder();
             int found = 0;
             int missing = 0;
             StringBuilder corpusBuilder = new StringBuilder();
+            int skillsBefore = confirmedSkills.size();
 
             // Progressive evidence fetching: fetch files in priority order,
             // check skills after each file, stop when all skills are confirmed.
@@ -852,26 +995,26 @@ public class JobMatcherService {
                 }
             }
 
+            // Accumulate evidence from this branch
             if (!branchEvidence.isEmpty()) {
-                bestEvidence = branchEvidence.toString();
-                branchUsed = branch;
-                totalFound = found;
-                totalMissing = missing;
-                break;
+                combinedEvidence.append(branchEvidence);
+                if (branchUsed.isEmpty()) branchUsed = branch;
             }
-            if (branchUsed.isEmpty()) {
-                branchUsed = branch;
-                totalFound = found;
-                totalMissing = missing;
-            }
+            totalFound += found;
+            totalMissing += missing;
+
+            int skillsAfter = confirmedSkills.size();
+            log.debug("repo={}/{} branch={} skillsBefore={} skillsAfter={} found={} missing={}",
+                    owner, repo, branch, skillsBefore, skillsAfter, found, missing);
         }
 
+        String bestEvidence = combinedEvidence.toString();
         if (bestEvidence.length() > MAX_TOTAL_EVIDENCE_PER_REPO) {
             bestEvidence = bestEvidence.substring(0, MAX_TOTAL_EVIDENCE_PER_REPO);
         }
 
-        log.debug("repo={} defaultBranch={} branchUsed={} evidenceFilesFound={} evidenceFilesMissing={}",
-                owner + "/" + repo, defaultBranch, branchUsed, totalFound, totalMissing);
+        log.debug("repo={} defaultBranch={} branchesChecked={} branchUsed={} evidenceFilesFound={} evidenceFilesMissing={}",
+                owner + "/" + repo, defaultBranch, branchesChecked, branchUsed, totalFound, totalMissing);
         return new EvidenceResult(bestEvidence, branchUsed, totalFound, totalMissing);
     }
 
@@ -933,10 +1076,9 @@ public class JobMatcherService {
                 if (!evidenceText.isBlank()) {
                     evidence.append("\n[file ").append(path).append("]\n");
                     evidence.append(evidenceText).append('\n');
-                    fetched++;
-                    // Track which skills this source file helped detect
+                    fetched++;                        // Track which skills this source file helped detect (filename-aware for Docker)
                     for (String skill : required) {
-                        if (!skillsDetected.contains(skill) && sourcePatternMatches(fr.content, skill)) {
+                        if (!skillsDetected.contains(skill) && sourcePatternMatches(fr.content, path, skill)) {
                             skillsDetected.add(skill);
                         }
                     }
@@ -955,9 +1097,37 @@ public class JobMatcherService {
      * Discover high-signal source file paths using bounded GitHub Contents API calls.
      * Only explores directories relevant to the required skills.
      * Stops early once enough high-signal files are located.
-     */    private List<String> discoverSourceFiles(String owner, String repo, String branch, List<String> required, MatchContext ctx) {
+     */    /**
+     * Candidate Java source roots to explore, in priority order.
+     * The discovery checks which of these exist at the repository root
+     * and explores the first ones that are found, bounded by budget.
+     */
+    private static final List<String> JAVA_SOURCE_ROOTS = List.of(
+            "src/main/java",
+            "backend/src/main/java",
+            "app/src/main/java",
+            "server/src/main/java",
+            "api/src/main/java",
+            "service/src/main/java"
+    );
+
+    /**
+     * Multi-module root pattern: "services" directory containing sub-modules.
+     * Each sub-module may have its own src/main/java tree.
+     */
+    private static final String MULTI_MODULE_SERVICES_ROOT = "services";
+
+    /**
+     * Discover high-signal source file paths using bounded GitHub Contents API calls.
+     * Supports multiple source roots and multi-module project structures.
+     * Only explores directories relevant to the required skills.
+     * Stops early once enough high-signal files are located.
+     */
+    private List<String> discoverSourceFiles(String owner, String repo, String branch,
+                                              List<String> required, MatchContext ctx) {
         List<String> paths = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
+        List<String> rootsChecked = new ArrayList<>();
 
         try {
             // Budget-aware root directory listing
@@ -969,7 +1139,9 @@ public class JobMatcherService {
                     rawResponse,
                     objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
 
-            List<String> javaSrcDirs = new ArrayList<>();
+            // Collect available source roots and root-level high-signal files
+            Set<String> availableRoots = new LinkedHashSet<>();
+            boolean hasMultiModuleServices = false;
 
             for (Map<String, Object> item : rootItems) {
                 String name = (String) item.get("name");
@@ -979,29 +1151,90 @@ public class JobMatcherService {
                 if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)) {
                     if (seen.add(name)) paths.add(name);
                 }
-                if ("dir".equals(type) && "src".equals(name)) {
-                    javaSrcDirs.add(name);
+
+                // Check which known source roots exist
+                if ("dir".equals(type)) {
+                    for (String root : JAVA_SOURCE_ROOTS) {
+                        String rootTopDir = root.split("/")[0];
+                        if (name.equals(rootTopDir)) {
+                            availableRoots.add(root);
+                        }
+                    }
+                    // Multi-module detection
+                    if (name.equals(MULTI_MODULE_SERVICES_ROOT)) {
+                        hasMultiModuleServices = true;
+                    }
                 }
             }
 
-            // Explore src/main/java — only relevant subdirectories
-            for (String srcDir : javaSrcDirs) {
+            // Explore each available source root (bounded by budget)
+            for (String root : availableRoots) {
+                if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
                 if (ctx.evidenceRequestBudget <= 0) break;
-                List<String> javaPaths = discoverJavaSourcePaths(owner, repo, branch,
-                        srcDir + "/main/java", required, ctx);
+                rootsChecked.add(root);
+                List<String> javaPaths = discoverJavaSourcePaths(
+                        owner, repo, branch, root, required, ctx);
                 for (String p : javaPaths) {
+                    if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
                     if (seen.add(p)) paths.add(p);
                 }
+            }
+
+            // Multi-module: explore services/*/src/main/java if not yet at limit
+            if (hasMultiModuleServices && paths.size() < MAX_SOURCE_FILES_PER_REPO
+                    && ctx.evidenceRequestBudget > 0) {
+                rootsChecked.add(MULTI_MODULE_SERVICES_ROOT + "/*");
+                discoverMultiModulePaths(owner, repo, branch, required, ctx, paths, seen);
             }
 
         } catch (Exception e) {
             log.debug("Source discovery failed for {}/{} branch={}: {}", owner, repo, branch, e.getMessage());
         }
 
+        log.debug("repo={}/{} sourceRootsChecked={} sourcePathsFound={}",
+                owner, repo, rootsChecked, paths.size());
+
         if (paths.size() > MAX_SOURCE_FILES_PER_REPO) {
             paths = paths.subList(0, MAX_SOURCE_FILES_PER_REPO);
         }
         return paths;
+    }
+
+    /**
+     * Explore multi-module projects (e.g., services/auth-service/src/main/java/...).
+     * Lists the services/ directory, then explores each sub-module's src/main/java.
+     */
+    private void discoverMultiModulePaths(String owner, String repo, String branch,
+                                            List<String> required, MatchContext ctx,
+                                            List<String> paths, Set<String> seen) {
+        try {
+            Object rawResponse = budgetedDirFetch(owner, repo, branch, MULTI_MODULE_SERVICES_ROOT, ctx);
+            if (rawResponse == null) return;
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> items = objectMapper.convertValue(
+                    rawResponse,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+
+            for (Map<String, Object> item : items) {
+                if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                if (ctx.evidenceRequestBudget <= 0) break;
+
+                String name = (String) item.get("name");
+                String type = (String) item.get("type");
+                if (name == null || type == null || !"dir".equals(type)) continue;
+
+                String moduleSrc = MULTI_MODULE_SERVICES_ROOT + "/" + name + "/src/main/java";
+                List<String> modulePaths = discoverJavaSourcePaths(
+                        owner, repo, branch, moduleSrc, required, ctx);
+                for (String p : modulePaths) {
+                    if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                    if (seen.add(p)) paths.add(p);
+                }
+            }
+        } catch (Exception e) {
+            // Non-fatal
+        }
     }
 
     private List<String> discoverJavaSourcePaths(String owner, String repo, String branch,
@@ -1089,8 +1322,8 @@ public class JobMatcherService {
         boolean needsGateway = normalizedRequired.stream().anyMatch(s ->
                 s.contains("gateway") || s.contains("microservice") || s.contains("routing"));
 
-        if (needsControllers) relevant.add("controller");
-        if (needsServices) relevant.add("service");
+        if (needsControllers) { relevant.add("controller"); relevant.add("controllers"); }
+        if (needsServices) { relevant.add("service"); relevant.add("services"); }
         if (needsConfig) { relevant.add("config"); relevant.add("configuration"); }
         if (needsRepository) { relevant.add("repository"); relevant.add("repo"); }
         if (needsGateway) { relevant.add("gateway"); relevant.add("filter"); }
@@ -1117,7 +1350,7 @@ public class JobMatcherService {
         Set<String> detected = new HashSet<>();
 
         for (String skill : required) {
-            if (sourcePatternMatches(content, skill)) {
+            if (sourcePatternMatches(content, path, skill)) {
                 detected.add(skill);
                 // Append the specific annotation/pattern line for HIGH-evidence priority
                 String snippet = extractSourceSnippet(content, skill);
@@ -1173,17 +1406,21 @@ public class JobMatcherService {
                 // HIGH-evidence: architectural patterns, NOT just the word "service"
                 // Require multiple signals OR one very strong signal
                 boolean hasSpringCloud = lower.contains("spring cloud") || lower.contains("spring-cloud");
-                boolean hasEureka = lower.contains("eureka") || lower.contains("enableeurekaclient") || lower.contains("enablediscoveryclient");
+                boolean hasEureka = lower.contains("@enableeurekaclient") || lower.contains("@enablediscoveryclient") ||
+                        lower.contains("eureka");
                 boolean hasFeign = lower.contains("@feignclient");
-                boolean hasGateway = lower.contains("spring cloud gateway") || lower.contains("spring-cloud-gateway") || lower.contains("gatewayconfig");
+                boolean hasLoadBalanced = lower.contains("@loadbalanced");
+                boolean hasGateway = lower.contains("spring cloud gateway") || lower.contains("spring-cloud-gateway") ||
+                        lower.contains("@enablezuulproxy") || lower.contains("gatewayconfig") ||
+                        lower.contains("apigateway") || lower.contains("api-gateway");
                 boolean hasServiceDiscovery = lower.contains("service discovery") || lower.contains("service-discovery");
                 boolean hasMultipleModules = lower.contains("multi-module") || lower.contains("multi module");
 
-                // Strong single signals
-                if (hasEureka || hasFeign || hasGateway || hasServiceDiscovery || hasMultipleModules) return true;
+                // Strong single signals — Spring Cloud microservice annotations/patterns
+                if (hasEureka || hasFeign || hasLoadBalanced || hasGateway || hasServiceDiscovery || hasMultipleModules) return true;
 
-                // Spring Cloud + any service pattern
-                if (hasSpringCloud && (lower.contains("service") || lower.contains("module"))) return true;
+                // Spring Cloud is a strong standalone microservices signal
+                if (hasSpringCloud) return true;
 
                 return false;
             }
@@ -1196,22 +1433,27 @@ public class JobMatcherService {
                         lower.contains("springapplication.run");
             }
             case "sql" -> {
-                // HIGH-evidence: JPA/SQL annotations, .sql files, Spring Data repositories
-                return lower.contains("@entity") ||
-                        lower.contains("@table") ||
-                        lower.contains("@column") ||
-                        lower.contains("@repository") ||
-                        lower.contains("@query") ||
-                        lower.contains("@jpql") ||
-                        lower.contains("jparepository") ||
-                        lower.contains("crudrepository") ||
-                        lower.contains("jdbc") ||
-                        lower.contains("datasource") ||
-                        lower.contains("flyway") ||
-                        lower.contains("liquibase") ||
-                        lower.contains("create table") ||
-                        lower.contains("select ") ||
-                        lower.contains("insert into");
+                // HIGH-evidence: database systems, SQL queries, JPA annotations, migrations
+                // Direct database names — strong SQL evidence
+                boolean hasDbSystem = lower.contains("postgresql") || lower.contains("postgres") ||
+                        lower.contains("mysql") || lower.contains("sql server") || lower.contains("sqlserver") ||
+                        lower.contains("mariadb") || lower.contains("oracle") || lower.contains("mssql") ||
+                        lower.contains("database") || lower.contains("datasource");
+                // SQL operations and queries
+                boolean hasSqlOps = lower.contains("select ") || lower.contains("insert into") ||
+                        lower.contains("update ") || lower.contains("delete from") ||
+                        lower.contains("create table") || lower.contains("alter table") ||
+                        lower.contains("drop table");
+                // JPA/ORM annotations and patterns
+                boolean hasJpaAnnotations = lower.contains("@query") || lower.contains("@nativequery") ||
+                        lower.contains("@entity") || lower.contains("@table") ||
+                        lower.contains("@column") || lower.contains("@jpql") ||
+                        lower.contains("jparepository") || lower.contains("crudrepository") ||
+                        lower.contains("spring data jpa");
+                // Migration tools and JDBC
+                boolean hasMigrations = lower.contains("jdbc") || lower.contains("flyway") ||
+                        lower.contains("liquibase") || lower.contains("migration");
+                return hasDbSystem || hasSqlOps || hasJpaAnnotations || hasMigrations;
             }
             case "react" -> {
                 // HIGH-evidence: React imports and hooks
@@ -1228,6 +1470,24 @@ public class JobMatcherService {
                         lower.contains("react.fragment") ||
                         lower.contains("<tsx") ||
                         lower.contains("<jsx");
+            }
+            case "docker" -> {
+                // Docker evidence requires EITHER filename context OR explicit keyword evidence.
+                // Standalone "FROM"/"COPY" in Java files must NOT be classified as Docker.
+                // docker-compose files are strong Docker evidence.
+                return lower.contains("docker") || lower.contains("dockerfile") ||
+                        lower.contains("containerization") || lower.contains("containerized") ||
+                        lower.contains("docker compose") || lower.contains("docker-compose") ||
+                        lower.contains("dockerfile:") || lower.contains("image:");
+            }
+            case "java" -> {
+                // Java source evidence: strong Java-specific imports and annotations
+                return lower.contains("import java.") || lower.contains("import javax.") ||
+                        lower.contains("import jakarta.") || lower.contains("java.util.") ||
+                        lower.contains("java.lang.") || lower.contains("java.io.") ||
+                        lower.contains("java.nio.") ||
+                        lower.contains("@springbootapplication") ||
+                        lower.contains("springapplication.run");
             }
             case "git" -> {
                 // Git is handled at the platform level (buildCandidateCorpus adds "git_source:github_repository").
@@ -1246,6 +1506,28 @@ public class JobMatcherService {
                 return p != null && p.matcher(content).find();
             }
         }
+    }
+
+    /**
+     * Filename-aware source pattern matching.
+     * For Docker detection: the file path being a Dockerfile or docker-compose file
+     * is itself strong evidence. For all other skills, delegates to the content-only version.
+     */
+    static boolean sourcePatternMatches(String content, String filename, String skill) {
+        if (content == null || skill == null) return false;
+        String normalized = skill.toLowerCase(Locale.ROOT);
+
+        // Docker: filename itself is evidence
+        if ("docker".equals(normalized) && filename != null) {
+            String fnLower = filename.toLowerCase(Locale.ROOT);
+            // Dockerfile (at any path level) is strong Docker evidence
+            if (fnLower.contains("dockerfile")) return true;
+            // docker-compose files are strong Docker evidence
+            if (fnLower.contains("docker-compose") || fnLower.contains("docker_compose")) return true;
+        }
+
+        // For all other skills (or Docker without filename match), delegate to content matching
+        return sourcePatternMatches(content, skill);
     }
 
     /**
@@ -1269,11 +1551,20 @@ public class JobMatcherService {
                         lowerLine.contains("@requestmapping") || lowerLine.contains("@putmapping") ||
                         lowerLine.contains("@deletemapping") || lowerLine.contains("@patchmapping");
                 case "microservices" -> lowerLine.contains("eureka") || lowerLine.contains("@feignclient") ||
+                        lowerLine.contains("@enablediscoveryclient") || lowerLine.contains("@loadbalanced") ||
                         lowerLine.contains("spring cloud") || lowerLine.contains("gatewayconfig");
                 case "spring boot" -> lowerLine.contains("@springbootapplication") ||
                         lowerLine.contains("spring-boot-starter") || lowerLine.contains("springapplication.run");
-                case "sql" -> lowerLine.contains("@entity") || lowerLine.contains("@table") ||
-                        lowerLine.contains("@query") || lowerLine.contains("create table");
+                case "sql" -> lowerLine.contains("postgresql") || lowerLine.contains("postgres") ||
+                        lowerLine.contains("mysql") || lowerLine.contains("select ") ||
+                        lowerLine.contains("insert into") || lowerLine.contains("update ") ||
+                        lowerLine.contains("delete from") ||
+                        lowerLine.contains("@query") || lowerLine.contains("@nativequery") ||
+                        lowerLine.contains("@entity") || lowerLine.contains("create table");
+                case "docker" -> lowerLine.contains("docker") || lowerLine.contains("dockerfile") ||
+                        lowerLine.contains("containerization") || lowerLine.contains("image:");
+                case "java" -> lowerLine.contains("import java.") || lowerLine.contains("import javax.") ||
+                        lowerLine.contains("import jakarta.") || lowerLine.contains("@springbootapplication");
                 case "react" -> lowerLine.contains("from 'react'") || lowerLine.contains("from \"react\"") ||
                         lowerLine.contains("import react") || lowerLine.contains("usestate");
                 case "git" -> lowerLine.contains("git commit") || lowerLine.contains("git push") ||
