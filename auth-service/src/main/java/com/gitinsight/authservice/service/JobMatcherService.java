@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClient;
 import java.util.LinkedHashSet;
 import java.util.Set;
+import java.util.HashSet;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -27,7 +28,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
@@ -74,7 +77,34 @@ public class JobMatcherService {
     private static final int MAX_EVIDENCE_CHARS_PER_FILE = 8_000;
     private static final int MAX_TOTAL_EVIDENCE_PER_REPO = 24_000;
 
-    /** Small, high-signal files used for technology detection. */
+    /** Maximum source files to fetch per repository (bounded GitHub requests). */
+    private static final int MAX_SOURCE_FILES_PER_REPO = 5;
+
+    /** Maximum directory depth when browsing the repo tree for source files. */
+    private static final int SOURCE_TREE_DEPTH = 3;
+
+    /** High-signal file names to look for during source discovery. */
+    private static final Set<String> SOURCE_FILE_NAMES = Set.of(
+            "Application.java", "Application.kt",
+            "Controller.java", "RestController.java",
+            "Service.java", "ServiceImpl.java",
+            "Config.java", "Configuration.java",
+            "Repository.java", "Mapper.java",
+            "GatewayConfig.java", "GatewayRouteConfig.java",
+            "Client.java", "FeignClient.java",
+            "Main.java",
+            "App.java", "index.js", "index.ts",
+            "App.jsx", "App.tsx",
+            "index.py", "app.py", "main.py",
+            "Dockerfile", "docker-compose.yml", "docker-compose.yaml"
+    );
+
+    /** Java package directories that signal source code presence. */
+    private static final Set<String> JAVA_SRC_PACKAGES = Set.of(
+            "controller", "service", "config", "configuration",
+            "repository", "model", "entity", "dto", "mapper",
+            "filter", "security", "client", "gateway", "util", "utils"
+    );
 
     private static final Pattern USERNAME_PATTERN = Pattern.compile("[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})");
 
@@ -91,6 +121,83 @@ public class JobMatcherService {
     private final RestClient rawGithubClient;
     private final ObjectMapper objectMapper;
 
+    /** Stored config for creating deadline-aware RestClient clones. */
+    private final String githubServiceBaseUrl;
+    private final String githubApiKey;
+
+    /**
+     * Global deadline for an entire Job Match request. Covers all candidates,
+     * evidence collection, scoring, and the optional AI step. Must be less than
+     * the Gateway's 60-second recruiter timeout to leave margin for network
+     * overhead, JSON serialization, and gateway processing.
+     */
+    static final long GLOBAL_MATCH_TIME_MS = 50_000;
+
+    /**
+     * Maximum elapsed time (ms) for evidence collection per candidate.
+     * Capped dynamically to the remaining global time. This is a per-candidate
+     * cap, not the normal budget — the global deadline always takes priority.
+     */
+    static final long MAX_EVIDENCE_TIME_MS_PER_CANDIDATE = 15_000;
+
+    /**
+     * Hard per-candidate evidence request budget. Secondary guard — the time
+     * budget is the primary timeout safeguard.
+     */
+    static final int REQUEST_BUDGET_PER_CANDIDATE = 50;
+
+    /**
+     * Per-request mutable context for a single Job Match invocation.
+     * Eliminates shared mutable state on the singleton {@code JobMatcherService}
+     * so concurrent match requests are safe. Created once per {@code match()} call
+     * and threaded through all candidate analysis, evidence collection, and AI steps.
+     *
+ * <p>All elapsed-time calculations use {@code System.nanoTime()} (monotonic)
+     * rather than {@code System.currentTimeMillis()} (wall-clock, NTP-adjustable).
+     */
+    static class MatchContext {
+        /** Absolute deadline in nanoTime — highest priority budget guard. */
+        final long deadlineNanos;
+        /** Start of current candidate's evidence collection (nanoTime). */
+        long evidenceStartNanos;
+        /** Remaining evidence requests for current candidate (mutable, decremented). */
+        int evidenceRequestBudget;
+
+        MatchContext(long deadlineNanos, int evidenceRequestBudget) {
+            this.deadlineNanos = deadlineNanos;
+            this.evidenceRequestBudget = evidenceRequestBudget;
+        }
+
+        /** Check if global deadline has been reached. */
+        boolean isDeadlineReached() {
+            return System.nanoTime() >= deadlineNanos;
+        }
+
+        /** Remaining time in milliseconds (min 0). */
+        long remainingTimeMs() {
+            return Math.max(0, TimeUnit.NANOSECONDS.toMillis(deadlineNanos - System.nanoTime()));
+        }
+
+        /**
+         * Check if evidence budget is exhausted. Three independent guards:
+         * 1. Global match deadline (highest priority — covers ALL candidates)
+         * 2. Per-candidate evidence time limit (capped to remaining global time)
+         * 3. Per-candidate request count
+         *
+         * If ANY guard triggers, optional evidence collection stops.
+         */
+        boolean evidenceBudgetExhausted() {
+            long now = System.nanoTime();
+            long remainingGlobalNanos = deadlineNanos - now;
+            long perCandidateMaxNanos = TimeUnit.MILLISECONDS.toNanos(
+                    Math.min(MAX_EVIDENCE_TIME_MS_PER_CANDIDATE,
+                            TimeUnit.NANOSECONDS.toMillis(remainingGlobalNanos)));
+            return now >= deadlineNanos
+                    || (now - evidenceStartNanos) > perCandidateMaxNanos
+                    || evidenceRequestBudget <= 0;
+        }
+    }
+
     /** Small per-process cache for public repository evidence to avoid repeated raw-file calls. */
     private final Map<String, String> evidenceCache = new ConcurrentHashMap<>();
 
@@ -100,6 +207,8 @@ public class JobMatcherService {
             @Value("${app.internal-api-key:}") String internalApiKey,
             @Value("${app.job-matching.max-evidence-repos:${JOB_MATCHING_MAX_EVIDENCE_REPOS:15}}") int maxEvidenceRepos,
             ObjectMapper objectMapper) {
+        this.githubServiceBaseUrl = githubServiceUrl;
+        this.githubApiKey = internalApiKey;
         this.githubClient = buildClient(githubServiceUrl, internalApiKey);
         this.rawGithubClient = buildRawGithubClient();
         this.objectMapper = objectMapper;
@@ -112,6 +221,8 @@ public class JobMatcherService {
         this.rawGithubClient = buildRawGithubClient();
         this.objectMapper = new ObjectMapper();
         this.maxEvidenceRepos = HARD_MAX_EVIDENCE_REPOS;
+        this.githubServiceBaseUrl = "http://localhost:8081";
+        this.githubApiKey = "";
     }
 
     // ────────────────────────── Public API ──────────────────────────
@@ -130,13 +241,26 @@ public class JobMatcherService {
      * missing API key or AI failure never breaks the deterministic result).
      */
     public JobMatchResponse match(String jdText, List<String> usernames, String source, boolean includeAi) {
+        // Create per-request context with monotonic-clock deadline.
+        // This context is local to this call and thread-safe: concurrent
+        // match() invocations each get their own MatchContext.
+        MatchContext ctx = new MatchContext(
+                System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(GLOBAL_MATCH_TIME_MS),
+                REQUEST_BUDGET_PER_CANDIDATE);
+
         List<String> required = extractRequiredSkills(jdText);
         List<JobMatchCandidate> results = new ArrayList<>();
         int failed = 0;
 
         for (String username : usernames) {
+            // Check global deadline before each candidate (nanoTime — monotonic)
+            if (ctx.isDeadlineReached()) {
+                log.warn("Job match: global deadline reached after {} candidates, {} remaining skipped",
+                        results.size(), usernames.size() - results.size() - failed);
+                break;
+            }
             try {
-                results.add(analyzeCandidate(username, required));
+                results.add(analyzeCandidate(username, required, ctx));
             } catch (Exception e) {
                 failed++;
                 log.warn("Job match: failed to analyze candidate {}: {}", username, e.getMessage());
@@ -153,8 +277,15 @@ public class JobMatcherService {
             return base;
         }
 
+        // Check global deadline before AI step — skip if insufficient time remains
+        long aiTimeRemainingMs = ctx.remainingTimeMs();
+        if (aiTimeRemainingMs < 5_000) {
+            log.info("Job match: skipping AI explanations, {}ms remaining (need ≥5000ms)", aiTimeRemainingMs);
+            return base;
+        }
+
         try {
-            AiMatchView ai = fetchAiExplanations(jobTitle, jdText, required, results);
+            AiMatchView ai = fetchAiExplanations(jobTitle, jdText, required, results, ctx);
             if (ai != null && ai.enabled() && ai.explanations() != null && !ai.explanations().isEmpty()) {
                 Map<String, AiExplanationView> byUsername = ai.explanations().stream()
                         .filter(e -> e.username() != null)
@@ -270,7 +401,8 @@ public class JobMatcherService {
     // ────────────────────────── AI step ──────────────────────────
 
     private AiMatchView fetchAiExplanations(
-            String jobTitle, String jdText, List<String> required, List<JobMatchCandidate> results) {
+            String jobTitle, String jdText, List<String> required, List<JobMatchCandidate> results,
+            MatchContext ctx) {
         List<JobMatchCandidate> top = results.stream().limit(AI_CANDIDATE_LIMIT).toList();
 
         Map<String, Object> body = new LinkedHashMap<>();
@@ -290,7 +422,9 @@ public class JobMatcherService {
                         "topRepos", c.topRepos()))
                 .toList());
 
-        ApiResponse<AiMatchView> response = githubClient.post()
+        // AI request uses dynamic timeout based on remaining global time
+        RestClient aiClient = dynamicTimeoutClient(ctx.remainingTimeMs(), 5_000, 20_000);
+        ApiResponse<AiMatchView> response = aiClient.post()
                 .uri("/api/ai/job-match")
                 .body(body)
                 .retrieve()
@@ -303,13 +437,18 @@ public class JobMatcherService {
 
     // ────────────────────────── Internals ──────────────────────────
 
-    private JobMatchCandidate analyzeCandidate(String username, List<String> required) {
+    private JobMatchCandidate analyzeCandidate(String username, List<String> required, MatchContext ctx) {
         long start = System.currentTimeMillis();
+        ctx.evidenceRequestBudget = REQUEST_BUDGET_PER_CANDIDATE;
+        ctx.evidenceStartNanos = System.nanoTime();
 
-        ScoreView score = fetch("/api/github/{u}/score", username, ScoreView.class);
-        ProfileView profile = fetch("/api/github/profile/{u}", username, ProfileView.class);
-        List<LanguageView> languages = fetchList("/api/github/{u}/languages/weighted", username, LanguageView.class);
-        List<RepoView> repos = fetchList("/api/github/{u}/repos", username, RepoView.class);
+        // Each API call uses a dynamic timeout based on remaining global time.
+        // If the deadline is reached between calls, subsequent calls return null/empty.
+        long remainingMs = ctx.remainingTimeMs();
+        ScoreView score = fetch("/api/github/{u}/score", username, ScoreView.class, remainingMs);
+        ProfileView profile = fetch("/api/github/profile/{u}", username, ProfileView.class, remainingMs);
+        List<LanguageView> languages = fetchList("/api/github/{u}/languages/weighted", username, LanguageView.class, remainingMs);
+        List<RepoView> repos = fetchList("/api/github/{u}/repos", username, RepoView.class, remainingMs);
 
         List<String> topRepos = repos.stream()
                 .sorted(Comparator.comparingInt(RepoView::stars).reversed())
@@ -327,33 +466,47 @@ public class JobMatcherService {
                 username, languages.size(), repos.size());
 
         EvidenceStats stats = new EvidenceStats();
-        String corpus = buildCandidateCorpus(username, profile, languages, repos, required, stats);
+        String corpus = buildCandidateCorpus(username, profile, languages, repos, required, stats, ctx);
 
-        List<String> matched = required.stream().filter(s -> matches(corpus, s)).collect(Collectors.toList());
+        // ── Platform-level Git evidence: a GitHub-hosted repository IS evidence of Git ──
+        if (!repos.isEmpty()) {
+            corpus = corpus + " git_source:github_repository";
+        }
+
+        final String finalCorpus = corpus;
+        List<String> matched = required.stream().filter(s -> matches(finalCorpus, s)).collect(Collectors.toList());
         List<String> missing = required.stream().filter(s -> !matched.contains(s)).collect(Collectors.toList());
 
         int skillMatchPercent = required.isEmpty() ? 100
                 : (int) Math.round(matched.size() * 100.0 / required.size());
-        int developerScore = score.overallScore();
+        // Null-safe: if deadline was reached during API calls, use defaults
+        int developerScore = score != null ? score.overallScore() : 0;
+        String level = score != null ? score.level() : "Unknown";
 
         long elapsed = System.currentTimeMillis() - start;
         log.info("JobMatch candidate={} reposReturned={} evidenceRepos={}/{} " +
-                        "evidenceFilesOk={}/{} reposWithEvidence={} matchedSkills={} missingSkills={} durationMs={}",
+                        "evidenceFilesOk={}/{} reposWithEvidence={} sourceFilesOk={}/{} " +
+                        "sourceFilesDiscovered={} sourceEvidenceSkills={} matchedSkills={} missingSkills={} durationMs={}",
                 username, repos.size(), stats.reposWithEvidence, stats.reposAttempted,
                 stats.filesFound, stats.filesFound + stats.filesMissing,
-                stats.reposWithEvidence, matched, missing, elapsed);
+                stats.reposWithEvidence,
+                stats.sourceFilesFound, stats.sourceFilesFound + stats.sourceFilesMissing,
+                stats.sourceFilesDiscovered, stats.sourceEvidenceSkills,
+                matched, missing, elapsed);
 
-        return new JobMatchCandidate(username, profile.name(), profile.avatarUrl(), profile.bio(),
-                developerScore, score.level(), computeMatchScore(skillMatchPercent, developerScore),
+        return new JobMatchCandidate(username,
+                profile != null ? profile.name() : username,
+                profile != null ? profile.avatarUrl() : null,
+                profile != null ? profile.bio() : null,
+                developerScore, level, computeMatchScore(skillMatchPercent, developerScore),
                 skillMatchPercent, matched, missing, topLanguages, topRepos);
     }
 
     /**
      * Build a deterministic skill corpus from public GitHub evidence.
      * In addition to the existing profile/repository metadata, we inspect a small
-     * bounded set of README/build/deployment files from the top repositories.
-     * This is what lets the matcher detect technologies such as Spring Boot,
-     * REST APIs, Microservices and Docker even when they are not listed as topics.
+     * bounded set of README/build/deployment files and high-signal source files
+     * from the top repositories.
      */
     private String buildCandidateCorpus(
             String username,
@@ -361,7 +514,8 @@ public class JobMatcherService {
             List<LanguageView> languages,
             List<RepoView> repos,
             List<String> required,
-            EvidenceStats stats) {
+            EvidenceStats stats,
+            MatchContext ctx) {
 
         StringBuilder sb = new StringBuilder(16_000);
 
@@ -394,7 +548,7 @@ public class JobMatcherService {
             if (r.language() != null) sb.append(r.language()).append(' ');
             if (r.topics() != null) sb.append(String.join(" ", r.topics())).append(' ');
 
-            EvidenceResult er = fetchRepositoryEvidence(username, r.name(), r.defaultBranch(), required);
+            EvidenceResult er = fetchRepositoryEvidence(username, r.name(), r.defaultBranch(), required, stats, ctx);
             if (!er.content.isBlank()) {
                 sb.append(' ').append(er.content).append(' ');
                 stats.reposWithEvidence++;
@@ -406,23 +560,35 @@ public class JobMatcherService {
         return sb.toString().toLowerCase(Locale.ROOT);
     }
 
-    private <T> T fetch(String path, String username, Class<T> type) {
+    /**
+     * Fetch a single object from github-service with a dynamic timeout that
+     * respects the remaining global match deadline. The socket timeout ensures
+     * the HTTP request cannot outlive the deadline.
+     */
+    private <T> T fetch(String path, String username, Class<T> type, long remainingMs) {
+        if (remainingMs <= 0) return null;
 
-        ApiResponse<?> response = githubClient.get()
+        RestClient client = dynamicTimeoutClient(remainingMs, 5_000, 20_000);
+        ApiResponse<?> response = client.get()
                 .uri(path, username)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<Object>>() {});
 
         if (response == null || !response.isSuccess() || response.getData() == null) {
-            throw new IllegalStateException("github-service returned no data for " + username);
+            return null;
         }
 
         return objectMapper.convertValue(response.getData(), type);
     }
 
-    private <T> List<T> fetchList(String path, String username, Class<T> elementType) {
+    /**
+     * Fetch a list from github-service with a dynamic timeout.
+     */
+    private <T> List<T> fetchList(String path, String username, Class<T> elementType, long remainingMs) {
+        if (remainingMs <= 0) return List.of();
 
-        ApiResponse<?> response = githubClient.get()
+        RestClient client = dynamicTimeoutClient(remainingMs, 5_000, 20_000);
+        ApiResponse<?> response = client.get()
                 .uri(path, username)
                 .retrieve()
                 .body(new ParameterizedTypeReference<ApiResponse<Object>>() {});
@@ -464,8 +630,21 @@ public class JobMatcherService {
         return score;
     }
 
-    private static List<String> evidenceFilesFor(List<String> required) {
-        Set<String> files = new LinkedHashSet<>();
+    /**
+     * High-signal files to inspect for technology detection, returned in
+     * progressive priority order. The caller fetches files sequentially and
+     * stops early once all required skills are covered.
+     *
+     * <p>Order ensures the highest-signal file is tried first:
+     * <ul>
+     *   <li>README first (broad evidence for all skills)</li>
+     *   <li>Primary build file (pom.xml / package.json / Dockerfile)</li>
+     *   <li>Fallback build files only if primary is missing</li>
+     *   <li>Configuration files only if still needed</li>
+     * </ul>
+     */
+    static List<String> evidenceFilesFor(List<String> required) {
+        List<String> files = new ArrayList<>();
         files.add("README.md");
 
         Set<String> normalized = required == null
@@ -498,9 +677,11 @@ public class JobMatcherService {
                         s.contains("ci/cd"));
 
         if (javaEcosystem) {
+            // Primary build file first, then fallbacks
             files.add("pom.xml");
             files.add("build.gradle");
             files.add("build.gradle.kts");
+            // Configuration files (fetched only if still needed)
             files.add("application.yml");
             files.add("application.yaml");
             files.add("application.properties");
@@ -511,6 +692,7 @@ public class JobMatcherService {
         }
 
         if (dockerEcosystem) {
+            // Primary Docker file first, then fallbacks
             files.add("Dockerfile");
             files.add("docker-compose.yml");
             files.add("docker-compose.yaml");
@@ -526,17 +708,71 @@ public class JobMatcherService {
         int reposWithEvidence;
         int filesFound;
         int filesMissing;
+        int sourceFilesDiscovered;
+        int sourceFilesFound;
+        int sourceFilesMissing;
+        List<String> sourceEvidenceSkills = new ArrayList<>();
     }
 
-    private EvidenceResult fetchRepositoryEvidence(String owner, String repo, String defaultBranch, List<String> required) {
+    private record SourceEvidenceResult(String content, int filesFetched, int filesFailed, List<String> skillsDetected) {}
+
+    /**
+     * Check if the evidence budget is exhausted. Three independent guards:
+     * 1. Global match deadline (highest priority — covers ALL candidates)
+     * 2. Per-candidate evidence time limit
+     * 3. Per-candidate request count
+     *
+     * If ANY guard triggers, optional evidence collection stops.
+     */
+    /**
+     * Budget-aware file fetch. Decrements the per-candidate request budget and
+     * returns null if the budget (count or time) is exhausted.
+     */
+    private FileResult budgetedFetch(String owner, String repo, String branch, String file, MatchContext ctx) {
+        if (ctx.evidenceBudgetExhausted()) return null;
+        ctx.evidenceRequestBudget--;
+        return fetchRawRepositoryFile(owner, repo, branch, file, ctx);
+    }
+
+    /**
+     * Budget-aware directory API call for source discovery. Returns null if
+     * budget (count or time) is exhausted.
+     */
+    private Object budgetedDirFetch(String owner, String repo, String branch, String path, MatchContext ctx) {
+        if (ctx.evidenceBudgetExhausted()) return null;
+        ctx.evidenceRequestBudget--;
+        try {
+            RestClient client = dynamicTimeoutClient(ctx.remainingTimeMs(), 5_000, 20_000);
+            return client.get()
+                    .uri("/api/github/{owner}/{repo}/contents/{path}?ref={branch}", owner, repo, path, branch)
+                    .retrieve()
+                    .body(Object.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Fetch evidence for a single repository with progressive fetching and
+     * per-candidate request budgeting.
+     *
+     * <p>Cache design: NO repo-level aggregate cache. Each evidence file is cached
+     * independently at the file level (owner/repo/branch/file).
+     *
+     * <p>Evidence pipeline per branch (progressive, budget-aware):
+     * <ol>
+     *   <li>README (always fetched — broad evidence)</li>
+     *   <li>Primary build file (pom.xml / package.json / Dockerfile)</li>
+     *   <li>Fallback build files ONLY if primary missing AND skills still uncovered</li>
+     *   <li>Config files ONLY if skills still uncovered</li>
+     *   <li>Source discovery ONLY if all build/config evidence insufficient</li>
+     * </ol>
+     */
+    private EvidenceResult fetchRepositoryEvidence(String owner, String repo, String defaultBranch,
+                                                   List<String> required, EvidenceStats stats,
+                                                   MatchContext ctx) {
         if (owner == null || owner.isBlank() || repo == null || repo.isBlank()) {
             return new EvidenceResult("", "", 0, 0);
-        }
-
-        String cacheKey = owner + "/" + repo;
-        String cached = evidenceCache.get(cacheKey);
-        if (cached != null) {
-            return new EvidenceResult(cached, "cached", 0, 0);
         }
 
         List<String> branches = buildBranchPriority(defaultBranch);
@@ -545,22 +781,74 @@ public class JobMatcherService {
         int totalFound = 0;
         int totalMissing = 0;
 
+        // Track confirmed skills ACROSS all branch attempts.
+        // Once a skill is confirmed from any branch's evidence, it stays confirmed.
+        // Stopping is based on skill confirmation, not file existence.
+        Set<String> confirmedSkills = new HashSet<>();
+
         for (String branch : branches) {
+            if (ctx.evidenceBudgetExhausted()) break;
+
+            // If ALL required skills are already confirmed from a previous branch, skip
+            boolean allSkillsConfirmed = !required.isEmpty()
+                    && required.stream().allMatch(confirmedSkills::contains);
+            if (allSkillsConfirmed) break;
+
             StringBuilder branchEvidence = new StringBuilder();
             int found = 0;
             int missing = 0;
+            StringBuilder corpusBuilder = new StringBuilder();
 
-            for (String file : evidenceFilesFor(required)) {
-                FileResult fr = fetchRawRepositoryFile(owner, repo, branch, file);
+            // Progressive evidence fetching: fetch files in priority order,
+            // check skills after each file, stop when all skills are confirmed.
+            List<String> evidenceFiles = evidenceFilesFor(required);
+
+            for (String file : evidenceFiles) {
+                if (ctx.evidenceBudgetExhausted()) break;
+
+                FileResult fr = budgetedFetch(owner, repo, branch, file, ctx);
+                if (fr == null) break; // budget exhausted
+
                 if (!fr.content.isBlank()) {
                     branchEvidence.append("\n[file ")
                             .append(file)
                             .append("]\n")
                             .append(fr.content)
                             .append('\n');
+                    corpusBuilder.append(fr.content).append(' ');
                     found++;
+
+                    // Skill-based early stopping: check which skills are confirmed
+                    if (!required.isEmpty()) {
+                        String corpus = corpusBuilder.toString().toLowerCase(Locale.ROOT);
+                        for (String skill : required) {
+                            if (!confirmedSkills.contains(skill) && matches(corpus, skill)) {
+                                confirmedSkills.add(skill);
+                            }
+                        }
+                    }
                 } else {
                     missing++;
+                }
+
+                // If all skills confirmed, skip remaining build/config files for this branch
+                allSkillsConfirmed = !required.isEmpty()
+                        && required.stream().allMatch(confirmedSkills::contains);
+                if (allSkillsConfirmed) break;
+            }
+
+            // Source discovery: ONLY when skills are still unconfirmed
+            if (!allSkillsConfirmed && !required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
+                SourceEvidenceResult ser = fetchSourceEvidence(owner, repo, branch, required, stats, ctx);
+                if (!ser.content.isBlank()) {
+                    branchEvidence.append("\n[source-evidence]\n")
+                            .append(ser.content)
+                            .append('\n');
+                    found += ser.filesFetched;
+                    stats.sourceFilesDiscovered += ser.filesFetched + ser.filesFailed;
+                    stats.sourceFilesFound += ser.filesFetched;
+                    stats.sourceFilesMissing += ser.filesFailed;
+                    stats.sourceEvidenceSkills.addAll(ser.skillsDetected);
                 }
             }
 
@@ -571,7 +859,6 @@ public class JobMatcherService {
                 totalMissing = missing;
                 break;
             }
-            // Track the first attempt's stats even if no evidence found
             if (branchUsed.isEmpty()) {
                 branchUsed = branch;
                 totalFound = found;
@@ -583,7 +870,6 @@ public class JobMatcherService {
             bestEvidence = bestEvidence.substring(0, MAX_TOTAL_EVIDENCE_PER_REPO);
         }
 
-        evidenceCache.put(cacheKey, bestEvidence);
         log.debug("repo={} defaultBranch={} branchUsed={} evidenceFilesFound={} evidenceFilesMissing={}",
                 owner + "/" + repo, defaultBranch, branchUsed, totalFound, totalMissing);
         return new EvidenceResult(bestEvidence, branchUsed, totalFound, totalMissing);
@@ -603,9 +889,411 @@ public class JobMatcherService {
         return List.copyOf(branches);
     }
 
+    // ────────────────────────── Source evidence discovery ──────────────────────────
+
+    /**
+     * Discover and fetch targeted high-signal source files for skill detection.
+     * Returns at most {@link #MAX_SOURCE_FILES_PER_REPO} source files.
+     *
+     * <p>Discovery strategy (bounded GitHub Contents API calls):
+     * <ol>
+     *   <li>Fetch root directory listing (1 API call)</li>
+     *   <li>Identify high-signal files and Java src directories</li>
+     *   <li>If Java project: explore src/main/java + known package dirs
+     *       (typically 2-6 additional API calls, bounded by {@link #SOURCE_TREE_DEPTH})</li>
+     *   <li>Fetch up to 5 highest-signal files (raw.githubusercontent.com)</li>
+     * </ol>
+     */
+    private SourceEvidenceResult fetchSourceEvidence(String owner, String repo, String branch,
+                                                     List<String> required, EvidenceStats stats,
+                                                     MatchContext ctx) {
+        // Discover source file paths (bounded directory API calls)
+        List<String> sourcePaths = discoverSourceFiles(owner, repo, branch, required, ctx);
+        if (sourcePaths.isEmpty()) {
+            return new SourceEvidenceResult("", 0, 0, List.of());
+        }
+
+        StringBuilder evidence = new StringBuilder();
+        int fetched = 0;
+        int failed = 0;
+        List<String> skillsDetected = new ArrayList<>();
+
+        for (String path : sourcePaths) {
+            if (fetched >= MAX_SOURCE_FILES_PER_REPO) break;
+
+            // Early stopping: stop once all required skills are covered
+            if (required.stream().allMatch(s -> skillsDetected.contains(s))) {
+                break;
+            }
+
+            FileResult fr = budgetedFetch(owner, repo, branch, path, ctx);
+            if (fr == null) break; // budget exhausted
+            if (!fr.content.isBlank()) {
+                String evidenceText = extractSourceEvidence(fr.content, path, required);
+                if (!evidenceText.isBlank()) {
+                    evidence.append("\n[file ").append(path).append("]\n");
+                    evidence.append(evidenceText).append('\n');
+                    fetched++;
+                    // Track which skills this source file helped detect
+                    for (String skill : required) {
+                        if (!skillsDetected.contains(skill) && sourcePatternMatches(fr.content, skill)) {
+                            skillsDetected.add(skill);
+                        }
+                    }
+                }
+            } else {
+                failed++;
+            }
+        }
+
+        log.debug("owner/{}/{} branch={} sourceFilesDiscovered={} sourceFilesFetched={} sourceFilesFailed={} sourceEvidenceSkills={}",
+                owner, repo, branch, sourcePaths.size(), fetched, failed, skillsDetected);
+        return new SourceEvidenceResult(evidence.toString(), fetched, failed, skillsDetected);
+    }
+
+    /**
+     * Discover high-signal source file paths using bounded GitHub Contents API calls.
+     * Only explores directories relevant to the required skills.
+     * Stops early once enough high-signal files are located.
+     */    private List<String> discoverSourceFiles(String owner, String repo, String branch, List<String> required, MatchContext ctx) {
+        List<String> paths = new ArrayList<>();
+        Set<String> seen = new LinkedHashSet<>();
+
+        try {
+            // Budget-aware root directory listing
+            Object rawResponse = budgetedDirFetch(owner, repo, branch, "", ctx);
+            if (rawResponse == null) return paths;
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> rootItems = objectMapper.convertValue(
+                    rawResponse,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+
+            List<String> javaSrcDirs = new ArrayList<>();
+
+            for (Map<String, Object> item : rootItems) {
+                String name = (String) item.get("name");
+                String type = (String) item.get("type");
+                if (name == null || type == null) continue;
+
+                if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)) {
+                    if (seen.add(name)) paths.add(name);
+                }
+                if ("dir".equals(type) && "src".equals(name)) {
+                    javaSrcDirs.add(name);
+                }
+            }
+
+            // Explore src/main/java — only relevant subdirectories
+            for (String srcDir : javaSrcDirs) {
+                if (ctx.evidenceRequestBudget <= 0) break;
+                List<String> javaPaths = discoverJavaSourcePaths(owner, repo, branch,
+                        srcDir + "/main/java", required, ctx);
+                for (String p : javaPaths) {
+                    if (seen.add(p)) paths.add(p);
+                }
+            }
+
+        } catch (Exception e) {
+            log.debug("Source discovery failed for {}/{} branch={}: {}", owner, repo, branch, e.getMessage());
+        }
+
+        if (paths.size() > MAX_SOURCE_FILES_PER_REPO) {
+            paths = paths.subList(0, MAX_SOURCE_FILES_PER_REPO);
+        }
+        return paths;
+    }
+
+    private List<String> discoverJavaSourcePaths(String owner, String repo, String branch,
+                                                  String basePath, List<String> required,
+                                                  MatchContext ctx) {
+        List<String> paths = new ArrayList<>();
+        Set<String> normalizedRequired = required == null ? Set.of()
+                : required.stream().map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
+        Set<String> relevantPackages = filterRelevantPackages(normalizedRequired);
+
+        try {
+            Object rawResponse = budgetedDirFetch(owner, repo, branch, basePath, ctx);
+            if (rawResponse == null) return paths;
+
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> items = objectMapper.convertValue(
+                    rawResponse,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+
+            Queue<String> dirsToExplore = new java.util.LinkedList<>();
+
+            for (Map<String, Object> item : items) {
+                String name = (String) item.get("name");
+                String type = (String) item.get("type");
+                if (name == null || type == null) continue;
+
+                if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)) {
+                    paths.add(basePath + "/" + name);
+                }
+                if ("dir".equals(type) && relevantPackages.contains(name.toLowerCase(Locale.ROOT))) {
+                    dirsToExplore.add(basePath + "/" + name);
+                }
+            }
+
+            int depth = 0;
+            while (!dirsToExplore.isEmpty() && depth < SOURCE_TREE_DEPTH
+                    && paths.size() < MAX_SOURCE_FILES_PER_REPO && ctx.evidenceRequestBudget > 0) {
+                String dir = dirsToExplore.poll();
+                try {
+                    Object dirResponse = budgetedDirFetch(owner, repo, branch, dir, ctx);
+                    if (dirResponse == null) continue;
+
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> dirItems = objectMapper.convertValue(
+                            dirResponse,
+                            objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+
+                    for (Map<String, Object> di : dirItems) {
+                        String name = (String) di.get("name");
+                        String type = (String) di.get("type");
+                        if (name == null || type == null) continue;
+                        if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)) {
+                            paths.add(dir + "/" + name);
+                        }
+                    }
+                } catch (Exception e) {
+                    // Skip inaccessible directories
+                }
+                depth++;
+            }
+
+        } catch (Exception e) {
+            // Non-fatal
+        }
+        return paths;
+    }
+
+    /**
+     * Filter package directories to only those relevant to the required skills.
+     * This reduces unnecessary directory exploration during source discovery.
+     */
+    private static Set<String> filterRelevantPackages(Set<String> normalizedRequired) {
+        Set<String> relevant = new HashSet<>();
+        boolean needsControllers = normalizedRequired.stream().anyMatch(s ->
+                s.contains("rest api") || s.contains("spring") || s.contains("java") ||
+                s.contains("web") || s.contains("api"));
+        boolean needsServices = normalizedRequired.stream().anyMatch(s ->
+                s.contains("microservice") || s.contains("service") || s.contains("business"));
+        boolean needsConfig = normalizedRequired.stream().anyMatch(s ->
+                s.contains("spring") || s.contains("config") || s.contains("security") ||
+                s.contains("gateway") || s.contains("eureka"));
+        boolean needsRepository = normalizedRequired.stream().anyMatch(s ->
+                s.contains("sql") || s.contains("database") || s.contains("jpa") ||
+                s.contains("hibernate") || s.contains("data"));
+        boolean needsGateway = normalizedRequired.stream().anyMatch(s ->
+                s.contains("gateway") || s.contains("microservice") || s.contains("routing"));
+
+        if (needsControllers) relevant.add("controller");
+        if (needsServices) relevant.add("service");
+        if (needsConfig) { relevant.add("config"); relevant.add("configuration"); }
+        if (needsRepository) { relevant.add("repository"); relevant.add("repo"); }
+        if (needsGateway) { relevant.add("gateway"); relevant.add("filter"); }
+        // Always explore model/entity/dto for skill detection
+        relevant.add("model");
+        relevant.add("entity");
+        relevant.add("dto");
+
+        return relevant;
+    }
+
+    // ────────────────────────── Source evidence extraction ──────────────────────────
+
+    /**
+     * Extract skill-relevant evidence from a source file's content.
+     * Returns evidence text snippets only for skills that are in the required list.
+     * Empty string means no relevant source evidence found in this file.
+     */
+    private static String extractSourceEvidence(String content, String path, List<String> required) {
+        if (content == null || content.isBlank()) return "";
+        if (required == null || required.isEmpty()) return "";
+
+        StringBuilder evidence = new StringBuilder();
+        Set<String> detected = new HashSet<>();
+
+        for (String skill : required) {
+            if (sourcePatternMatches(content, skill)) {
+                detected.add(skill);
+                // Append the specific annotation/pattern line for HIGH-evidence priority
+                String snippet = extractSourceSnippet(content, skill);
+                if (!snippet.isBlank()) {
+                    evidence.append("[").append(skill).append("] ").append(snippet).append('\n');
+                }
+            }
+        }
+
+        return evidence.toString();
+    }
+
+    /**
+     * Check whether a source file's content matches skill-specific patterns.
+     * Uses HIGH-evidence priority: direct source annotations/keywords.
+     * FALSE-POSITIVE PROTECTION: patterns require word boundaries or specific contexts.
+     */
+    static boolean sourcePatternMatches(String content, String skill) {
+        if (content == null || skill == null) return false;
+        String lower = content.toLowerCase(Locale.ROOT);
+        String normalized = skill.toLowerCase(Locale.ROOT);
+
+        switch (normalized) {
+            case "rest api" -> {
+                // HIGH-evidence: Spring MVC annotations (word-boundary safe, @ prefix prevents false matches)
+                return lower.contains("@restcontroller") ||
+                        lower.contains("@restcontrolleradvice") ||
+                        lower.contains("@requestmapping") ||
+                        lower.contains("@getmapping") ||
+                        lower.contains("@postmapping") ||
+                        lower.contains("@putmapping") ||
+                        lower.contains("@patchmapping") ||
+                        lower.contains("@deletemapping") ||
+                        lower.contains("@requestparam") ||
+                        lower.contains("@pathvariable") ||
+                        lower.contains("@responseentity") ||
+                        // Express/Node.js REST patterns
+                        lower.contains("app.get(") ||
+                        lower.contains("app.post(") ||
+                        lower.contains("app.put(") ||
+                        lower.contains("app.delete(") ||
+                        lower.contains("router.get(") ||
+                        lower.contains("router.post(") ||
+                        // Python FastAPI/Flask REST patterns
+                        lower.contains("@app.get(") ||
+                        lower.contains("@app.post(") ||
+                        lower.contains("@app.put(") ||
+                        lower.contains("@app.delete(") ||
+                        lower.contains("@router.get(") ||
+                        lower.contains("@router.post(");
+            }
+            case "microservices" -> {
+                // HIGH-evidence: architectural patterns, NOT just the word "service"
+                // Require multiple signals OR one very strong signal
+                boolean hasSpringCloud = lower.contains("spring cloud") || lower.contains("spring-cloud");
+                boolean hasEureka = lower.contains("eureka") || lower.contains("enableeurekaclient") || lower.contains("enablediscoveryclient");
+                boolean hasFeign = lower.contains("@feignclient");
+                boolean hasGateway = lower.contains("spring cloud gateway") || lower.contains("spring-cloud-gateway") || lower.contains("gatewayconfig");
+                boolean hasServiceDiscovery = lower.contains("service discovery") || lower.contains("service-discovery");
+                boolean hasMultipleModules = lower.contains("multi-module") || lower.contains("multi module");
+
+                // Strong single signals
+                if (hasEureka || hasFeign || hasGateway || hasServiceDiscovery || hasMultipleModules) return true;
+
+                // Spring Cloud + any service pattern
+                if (hasSpringCloud && (lower.contains("service") || lower.contains("module"))) return true;
+
+                return false;
+            }
+            case "spring boot" -> {
+                // HIGH-evidence: @SpringBootApplication, Spring Boot starter dependencies
+                return lower.contains("@springbootapplication") ||
+                        lower.contains("@springbootconfiguration") ||
+                        lower.contains("spring.application.name") ||
+                        lower.contains("spring-boot-starter") ||
+                        lower.contains("springapplication.run");
+            }
+            case "sql" -> {
+                // HIGH-evidence: JPA/SQL annotations, .sql files, Spring Data repositories
+                return lower.contains("@entity") ||
+                        lower.contains("@table") ||
+                        lower.contains("@column") ||
+                        lower.contains("@repository") ||
+                        lower.contains("@query") ||
+                        lower.contains("@jpql") ||
+                        lower.contains("jparepository") ||
+                        lower.contains("crudrepository") ||
+                        lower.contains("jdbc") ||
+                        lower.contains("datasource") ||
+                        lower.contains("flyway") ||
+                        lower.contains("liquibase") ||
+                        lower.contains("create table") ||
+                        lower.contains("select ") ||
+                        lower.contains("insert into");
+            }
+            case "react" -> {
+                // HIGH-evidence: React imports and hooks
+                return lower.contains("from 'react'") ||
+                        lower.contains("from \"react\"") ||
+                        lower.contains("import react") ||
+                        lower.contains("usestate") ||
+                        lower.contains("useeffect") ||
+                        lower.contains("usecallback") ||
+                        lower.contains("usememo") ||
+                        lower.contains("usecontext") ||
+                        lower.contains("useref") ||
+                        lower.contains("react.component") ||
+                        lower.contains("react.fragment") ||
+                        lower.contains("<tsx") ||
+                        lower.contains("<jsx");
+            }
+            case "git" -> {
+                // Git is handled at the platform level (buildCandidateCorpus adds "git_source:github_repository").
+                // Source-level Git evidence: .gitignore, Git commands, CI/CD with git.
+                return lower.contains(".gitignore") ||
+                        lower.contains("git commit") ||
+                        lower.contains("git push") ||
+                        lower.contains("git pull") ||
+                        lower.contains("git clone") ||
+                        lower.contains("github actions") ||
+                        lower.contains("github-action");
+            }
+            default -> {
+                // For all other skills, fall back to the text-based SKILL_PATTERNS
+                Pattern p = SKILL_PATTERNS.get(skill);
+                return p != null && p.matcher(content).find();
+            }
+        }
+    }
+
+    /**
+     * Extract a short evidence snippet from source content for a given skill.
+     * Returns the first matching annotation/line (truncated to MAX_EVIDENCE_CHARS_PER_FILE).
+     * This provides the HIGH-evidence priority indicator.
+     */
+    private static String extractSourceSnippet(String content, String skill) {
+        if (content == null || skill == null) return "";
+        String normalized = skill.toLowerCase(Locale.ROOT);
+        String[] lines = content.split("\n");
+
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty() || trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
+            String lowerLine = trimmed.toLowerCase(Locale.ROOT);
+
+            boolean match = switch (normalized) {
+                case "rest api" -> lowerLine.contains("@restcontroller") ||
+                        lowerLine.contains("@getmapping") || lowerLine.contains("@postmapping") ||
+                        lowerLine.contains("@requestmapping") || lowerLine.contains("@putmapping") ||
+                        lowerLine.contains("@deletemapping") || lowerLine.contains("@patchmapping");
+                case "microservices" -> lowerLine.contains("eureka") || lowerLine.contains("@feignclient") ||
+                        lowerLine.contains("spring cloud") || lowerLine.contains("gatewayconfig");
+                case "spring boot" -> lowerLine.contains("@springbootapplication") ||
+                        lowerLine.contains("spring-boot-starter") || lowerLine.contains("springapplication.run");
+                case "sql" -> lowerLine.contains("@entity") || lowerLine.contains("@table") ||
+                        lowerLine.contains("@query") || lowerLine.contains("create table");
+                case "react" -> lowerLine.contains("from 'react'") || lowerLine.contains("from \"react\"") ||
+                        lowerLine.contains("import react") || lowerLine.contains("usestate");
+                case "git" -> lowerLine.contains("git commit") || lowerLine.contains("git push") ||
+                        lowerLine.contains("github actions");
+                default -> false;
+            };
+
+            if (match) {
+                return trimmed.length() > 120 ? trimmed.substring(0, 120) + "..." : trimmed;
+            }
+        }
+        return "";
+    }
+
+    // ────────────────────────── Raw file fetching ──────────────────────────
+
     private record FileResult(String content, String errorType) {}
 
-    private FileResult fetchRawRepositoryFile(String owner, String repo, String branch, String file) {
+    private FileResult fetchRawRepositoryFile(String owner, String repo, String branch, String file,
+                                                MatchContext ctx) {
         String key = owner + "/" + repo + "/" + branch + "/" + file;
         String cached = evidenceCache.get(key);
         if (cached != null) {
@@ -613,7 +1301,9 @@ public class JobMatcherService {
         }
 
         try {
-            String content = rawGithubClient.get()
+            // Use dynamic timeout that respects remaining global match deadline
+            RestClient client = dynamicRawClient(ctx.remainingTimeMs());
+            String content = client.get()
                     .uri("/{owner}/{repo}/{branch}/{file}", owner, repo, branch, file)
                     .retrieve()
                     .body(String.class);
@@ -633,13 +1323,13 @@ public class JobMatcherService {
             evidenceCache.put(key, "");
             return new FileResult("", "404");
         } catch (org.springframework.web.client.HttpClientErrorException.TooManyRequests e) {
-            evidenceCache.put(key, "");
+            // 429 is transient — do not permanently cache as missing evidence
             return new FileResult("", "429");
         } catch (org.springframework.web.client.HttpClientErrorException.Forbidden e) {
             evidenceCache.put(key, "");
             return new FileResult("", "403");
         } catch (org.springframework.web.client.HttpServerErrorException e) {
-            evidenceCache.put(key, "");
+            // 5xx is transient — do not permanently cache as missing evidence
             return new FileResult("", "5xx");
         } catch (org.springframework.web.client.ResourceAccessException e) {
             // Timeout or connection failure — do not cache as permanent empty
@@ -657,6 +1347,49 @@ public class JobMatcherService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3_000);
         factory.setReadTimeout(5_000);
+
+        return RestClient.builder()
+                .baseUrl("https://raw.githubusercontent.com")
+                .defaultHeader("Accept", "text/plain")
+                .requestFactory(factory)
+                .build();
+    }
+
+    /**
+     * Create a RestClient with dynamic socket timeouts that respect the remaining
+     * global match deadline. The actual HTTP request will be interrupted by the
+     * socket timeout if it exceeds the remaining time, preventing any single
+     * request from outliving the global deadline.
+     *
+     * @param remainingMs remaining time in milliseconds until the global deadline
+     * @param defaultConn connect timeout fallback (ms)
+     * @param defaultRead read timeout fallback (ms)
+     */
+    private RestClient dynamicTimeoutClient(long remainingMs, int defaultConn, int defaultRead) {
+        int effectiveTimeout = (int) Math.max(100, Math.min(remainingMs, defaultRead));
+
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Math.max(100, Math.min(remainingMs, defaultConn)));
+        factory.setReadTimeout(effectiveTimeout);
+
+        RestClient.Builder builder = RestClient.builder()
+                .baseUrl(githubServiceBaseUrl)
+                .requestFactory(factory);
+        if (githubApiKey != null && !githubApiKey.isBlank()) {
+            builder.defaultHeader("X-Internal-Api-Key", githubApiKey);
+        }
+        return builder.build();
+    }
+
+    /**
+     * Create a raw GitHub content client with dynamic timeout.
+     */
+    private RestClient dynamicRawClient(long remainingMs) {
+        int effectiveTimeout = (int) Math.max(100, Math.min(remainingMs, 5_000));
+
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout((int) Math.max(100, Math.min(remainingMs, 3_000)));
+        factory.setReadTimeout(effectiveTimeout);
 
         return RestClient.builder()
                 .baseUrl("https://raw.githubusercontent.com")
