@@ -304,12 +304,30 @@ public class JobMatcherService {
     // ────────────────────────── Internals ──────────────────────────
 
     private JobMatchCandidate analyzeCandidate(String username, List<String> required) {
+        long start = System.currentTimeMillis();
+
         ScoreView score = fetch("/api/github/{u}/score", username, ScoreView.class);
         ProfileView profile = fetch("/api/github/profile/{u}", username, ProfileView.class);
         List<LanguageView> languages = fetchList("/api/github/{u}/languages/weighted", username, LanguageView.class);
         List<RepoView> repos = fetchList("/api/github/{u}/repos", username, RepoView.class);
 
-        String corpus = buildCandidateCorpus(username, profile, languages, repos, required);
+        List<String> topRepos = repos.stream()
+                .sorted(Comparator.comparingInt(RepoView::stars).reversed())
+                .limit(5)
+                .map(RepoView::name)
+                .collect(Collectors.toList());
+
+        List<String> topLanguages = languages.stream()
+                .sorted(Comparator.comparingDouble(LanguageView::percentage).reversed())
+                .limit(8)
+                .map(LanguageView::language)
+                .collect(Collectors.toList());
+
+        log.debug("JobMatch candidate={} profileOk=true languages={} reposReturned={}",
+                username, languages.size(), repos.size());
+
+        EvidenceStats stats = new EvidenceStats();
+        String corpus = buildCandidateCorpus(username, profile, languages, repos, required, stats);
 
         List<String> matched = required.stream().filter(s -> matches(corpus, s)).collect(Collectors.toList());
         List<String> missing = required.stream().filter(s -> !matched.contains(s)).collect(Collectors.toList());
@@ -318,16 +336,12 @@ public class JobMatcherService {
                 : (int) Math.round(matched.size() * 100.0 / required.size());
         int developerScore = score.overallScore();
 
-        List<String> topLanguages = languages.stream()
-                .sorted(Comparator.comparingDouble(LanguageView::percentage).reversed())
-                .limit(8)
-                .map(LanguageView::language)
-                .collect(Collectors.toList());
-        List<String> topRepos = repos.stream()
-                .sorted(Comparator.comparingInt(RepoView::stars).reversed())
-                .limit(5)
-                .map(RepoView::name)
-                .collect(Collectors.toList());
+        long elapsed = System.currentTimeMillis() - start;
+        log.info("JobMatch candidate={} reposReturned={} evidenceRepos={}/{} " +
+                        "evidenceFilesOk={}/{} reposWithEvidence={} matchedSkills={} missingSkills={} durationMs={}",
+                username, repos.size(), stats.reposWithEvidence, stats.reposAttempted,
+                stats.filesFound, stats.filesFound + stats.filesMissing,
+                stats.reposWithEvidence, matched, missing, elapsed);
 
         return new JobMatchCandidate(username, profile.name(), profile.avatarUrl(), profile.bio(),
                 developerScore, score.level(), computeMatchScore(skillMatchPercent, developerScore),
@@ -346,7 +360,8 @@ public class JobMatcherService {
             ProfileView profile,
             List<LanguageView> languages,
             List<RepoView> repos,
-            List<String> required) {
+            List<String> required,
+            EvidenceStats stats) {
 
         StringBuilder sb = new StringBuilder(16_000);
 
@@ -371,16 +386,21 @@ public class JobMatcherService {
                 .limit(maxEvidenceRepos)
                 .toList();
 
+        stats.reposAttempted = topRepos.size();
+
         for (RepoView r : topRepos) {
             sb.append(r.name()).append(' ');
             if (r.description() != null) sb.append(r.description()).append(' ');
             if (r.language() != null) sb.append(r.language()).append(' ');
             if (r.topics() != null) sb.append(String.join(" ", r.topics())).append(' ');
 
-            String evidence = fetchRepositoryEvidence(username, r.name(), required);
-            if (!evidence.isBlank()) {
-                sb.append(' ').append(evidence).append(' ');
+            EvidenceResult er = fetchRepositoryEvidence(username, r.name(), r.defaultBranch(), required);
+            if (!er.content.isBlank()) {
+                sb.append(' ').append(er.content).append(' ');
+                stats.reposWithEvidence++;
             }
+            stats.filesFound += er.filesFound;
+            stats.filesMissing += er.filesMissing;
         }
 
         return sb.toString().toLowerCase(Locale.ROOT);
@@ -499,40 +519,63 @@ public class JobMatcherService {
         return List.copyOf(files);
     }
 
-    private String fetchRepositoryEvidence(String owner, String repo, List<String> required) {
+    private record EvidenceResult(String content, String branchUsed, int filesFound, int filesMissing) {}
+
+    private static class EvidenceStats {
+        int reposAttempted;
+        int reposWithEvidence;
+        int filesFound;
+        int filesMissing;
+    }
+
+    private EvidenceResult fetchRepositoryEvidence(String owner, String repo, String defaultBranch, List<String> required) {
         if (owner == null || owner.isBlank() || repo == null || repo.isBlank()) {
-            return "";
+            return new EvidenceResult("", "", 0, 0);
         }
 
         String cacheKey = owner + "/" + repo;
         String cached = evidenceCache.get(cacheKey);
         if (cached != null) {
-            return cached;
+            return new EvidenceResult(cached, "cached", 0, 0);
         }
 
+        List<String> branches = buildBranchPriority(defaultBranch);
         String bestEvidence = "";
+        String branchUsed = "";
+        int totalFound = 0;
+        int totalMissing = 0;
 
-        // Public repos commonly use main or master. We stop on the first branch
-        // that gives us meaningful content, avoiding an expensive branch fan-out.
-        for (String branch : List.of("main", "master")) {
+        for (String branch : branches) {
             StringBuilder branchEvidence = new StringBuilder();
+            int found = 0;
+            int missing = 0;
 
             for (String file : evidenceFilesFor(required)) {
-                String content = fetchRawRepositoryFile(owner, repo, branch, file);
-                if (content.isBlank()) {
-                    continue;
+                FileResult fr = fetchRawRepositoryFile(owner, repo, branch, file);
+                if (!fr.content.isBlank()) {
+                    branchEvidence.append("\n[file ")
+                            .append(file)
+                            .append("]\n")
+                            .append(fr.content)
+                            .append('\n');
+                    found++;
+                } else {
+                    missing++;
                 }
-
-                branchEvidence.append("\n[file ")
-                        .append(file)
-                        .append("]\n")
-                        .append(content)
-                        .append('\n');
             }
 
-            if (branchEvidence.length() > 0) {
+            if (!branchEvidence.isEmpty()) {
                 bestEvidence = branchEvidence.toString();
+                branchUsed = branch;
+                totalFound = found;
+                totalMissing = missing;
                 break;
+            }
+            // Track the first attempt's stats even if no evidence found
+            if (branchUsed.isEmpty()) {
+                branchUsed = branch;
+                totalFound = found;
+                totalMissing = missing;
             }
         }
 
@@ -541,14 +584,32 @@ public class JobMatcherService {
         }
 
         evidenceCache.put(cacheKey, bestEvidence);
-        return bestEvidence;
+        log.debug("repo={} defaultBranch={} branchUsed={} evidenceFilesFound={} evidenceFilesMissing={}",
+                owner + "/" + repo, defaultBranch, branchUsed, totalFound, totalMissing);
+        return new EvidenceResult(bestEvidence, branchUsed, totalFound, totalMissing);
     }
 
-    private String fetchRawRepositoryFile(String owner, String repo, String branch, String file) {
+    /**
+     * Build branch priority: defaultBranch first (if non-null/non-blank),
+     * then fallback to main/master, avoiding duplicates.
+     */
+    static List<String> buildBranchPriority(String defaultBranch) {
+        java.util.LinkedHashSet<String> branches = new java.util.LinkedHashSet<>();
+        if (defaultBranch != null && !defaultBranch.isBlank()) {
+            branches.add(defaultBranch.trim());
+        }
+        branches.add("main");
+        branches.add("master");
+        return List.copyOf(branches);
+    }
+
+    private record FileResult(String content, String errorType) {}
+
+    private FileResult fetchRawRepositoryFile(String owner, String repo, String branch, String file) {
         String key = owner + "/" + repo + "/" + branch + "/" + file;
         String cached = evidenceCache.get(key);
         if (cached != null) {
-            return cached;
+            return new FileResult(cached, null);
         }
 
         try {
@@ -566,13 +627,29 @@ public class JobMatcherService {
                     : content;
 
             evidenceCache.put(key, content);
-            return content;
+            return new FileResult(content, null);
 
-        } catch (Exception e) {
-            // 404 is normal for optional files; any other transient failure should
-            // not make the candidate fail. We simply fall back to metadata evidence.
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
             evidenceCache.put(key, "");
-            return "";
+            return new FileResult("", "404");
+        } catch (org.springframework.web.client.HttpClientErrorException.TooManyRequests e) {
+            evidenceCache.put(key, "");
+            return new FileResult("", "429");
+        } catch (org.springframework.web.client.HttpClientErrorException.Forbidden e) {
+            evidenceCache.put(key, "");
+            return new FileResult("", "403");
+        } catch (org.springframework.web.client.HttpServerErrorException e) {
+            evidenceCache.put(key, "");
+            return new FileResult("", "5xx");
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            // Timeout or connection failure — do not cache as permanent empty
+            String msg = e.getMessage() != null ? e.getMessage().toLowerCase(Locale.ROOT) : "";
+            String type = msg.contains("timeout") ? "timeout" : "connection_failure";
+            return new FileResult("", type);
+        } catch (Exception e) {
+            // Any other transient failure — do not cache as permanent empty
+            evidenceCache.put(key, "");
+            return new FileResult("", "unknown");
         }
     }
 
@@ -800,7 +877,7 @@ public class JobMatcherService {
     record LanguageView(String language, double percentage) {
     }
 
-    record RepoView(String name, String description, String language, List<String> topics, int stars) {
+    record RepoView(String name, String description, String language, List<String> topics, int stars, String defaultBranch) {
     }
 
     // ── github-service AI response projections ──

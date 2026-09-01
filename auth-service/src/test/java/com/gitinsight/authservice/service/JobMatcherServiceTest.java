@@ -237,10 +237,10 @@ class JobMatcherServiceTest {
 
         var springRepo = new RepoView("my-spring-api",
                 "Spring Boot REST microservice with Docker",
-                "Java", List.of("spring-boot", "rest-api", "docker"), 5);
+                "Java", List.of("spring-boot", "rest-api", "docker"), 5, "main");
         var portfolioRepo = new RepoView("portfolio",
                 "My personal portfolio website",
-                "HTML", List.of("portfolio", "website"), 50);
+                "HTML", List.of("portfolio", "website"), 50, "main");
 
         int springScore = JobMatcherService.computeRepoRelevance(springRepo, required);
         int portfolioScore = JobMatcherService.computeRepoRelevance(portfolioRepo, required);
@@ -251,7 +251,7 @@ class JobMatcherServiceTest {
 
     @Test
     void relevanceScoreIsZeroWhenNoRequiredSkills() {
-        var repo = new RepoView("repo", "desc", "Java", List.of(), 10);
+        var repo = new RepoView("repo", "desc", "Java", List.of(), 10, "main");
         assertThat(JobMatcherService.computeRepoRelevance(repo, List.of())).isZero();
         assertThat(JobMatcherService.computeRepoRelevance(repo, null)).isZero();
     }
@@ -261,14 +261,72 @@ class JobMatcherServiceTest {
         // Two repos with same relevance but different stars —
         // the sort should use stars as tiebreaker
         List<String> required = List.of("Java");
-        var repoA = new RepoView("api-a", "Java API", "Java", List.of(), 10);
-        var repoB = new RepoView("api-b", "Java API", "Java", List.of(), 100);
+        var repoA = new RepoView("api-a", "Java API", "Java", List.of(), 10, "main");
+        var repoB = new RepoView("api-b", "Java API", "Java", List.of(), 100, "main");
 
         int scoreA = JobMatcherService.computeRepoRelevance(repoA, required);
         int scoreB = JobMatcherService.computeRepoRelevance(repoB, required);
 
         assertThat(scoreA).isEqualTo(scoreB); // same relevance
         // Stars serve as tiebreaker in the actual sort (verified by sort lambda)
+    }
+
+    // ── RepoView includes defaultBranch ──
+
+    @Test
+    void repoViewIncludesDefaultBranch() {
+        var repo = new RepoView("my-repo", "desc", "Java", List.of(), 10, "develop");
+        assertThat(repo.defaultBranch()).isEqualTo("develop");
+    }
+
+    @Test
+    void repoViewDefaultBranchNullIsAllowed() {
+        var repo = new RepoView("my-repo", "desc", "Java", List.of(), 10, null);
+        assertThat(repo.defaultBranch()).isNull();
+    }
+
+    // ── buildBranchPriority (FIX B) ──
+
+    @Test
+    void defaultBranchDevelopUsesDevelopFirst() {
+        List<String> branches = JobMatcherService.buildBranchPriority("develop");
+        assertThat(branches).containsExactly("develop", "main", "master");
+    }
+
+    @Test
+    void defaultBranchDevUsesDevFirst() {
+        List<String> branches = JobMatcherService.buildBranchPriority("dev");
+        assertThat(branches).containsExactly("dev", "main", "master");
+    }
+
+    @Test
+    void defaultBranchMainDoesNotDuplicateMain() {
+        List<String> branches = JobMatcherService.buildBranchPriority("main");
+        assertThat(branches).containsExactly("main", "master");
+    }
+
+    @Test
+    void defaultBranchMasterDoesNotDuplicateMaster() {
+        List<String> branches = JobMatcherService.buildBranchPriority("master");
+        assertThat(branches).containsExactly("master", "main");
+    }
+
+    @Test
+    void nullDefaultBranchFallsBackToMainMaster() {
+        List<String> branches = JobMatcherService.buildBranchPriority(null);
+        assertThat(branches).containsExactly("main", "master");
+    }
+
+    @Test
+    void blankDefaultBranchFallsBackToMainMaster() {
+        List<String> branches = JobMatcherService.buildBranchPriority("  ");
+        assertThat(branches).containsExactly("main", "master");
+    }
+
+    @Test
+    void defaultBranchReleaseUsesReleaseFirst() {
+        List<String> branches = JobMatcherService.buildBranchPriority("release/v2");
+        assertThat(branches).containsExactly("release/v2", "main", "master");
     }
 
     // ── Existing formula unchanged ──
