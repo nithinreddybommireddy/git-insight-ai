@@ -37,6 +37,9 @@ server:
 
 eureka:
   client:
+    # Disabled by default: the api-gateway routes via direct URLs (Render).
+    # Enable (EUREKA_CLIENT_ENABLED=true) only when a reachable Eureka
+    # registry is deployed and instances register routable hostnames.
     enabled: ${EUREKA_CLIENT_ENABLED:false}
     service-url:
       # EUREKA_URL is the production name; EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
