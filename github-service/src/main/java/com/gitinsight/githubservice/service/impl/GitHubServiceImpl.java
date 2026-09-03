@@ -4,6 +4,7 @@ import com.gitinsight.githubservice.config.GitHubRateLimitInterceptor;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.GitHubRepoApiResponse;
 import com.gitinsight.githubservice.dto.response.GitHubUserApiResponse;
+import com.gitinsight.githubservice.dto.response.RepositoryContentResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import com.gitinsight.githubservice.service.GitHubCacheService;
 import com.gitinsight.githubservice.service.GitHubService;
@@ -14,9 +15,12 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClient;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -239,6 +243,71 @@ public class GitHubServiceImpl implements GitHubService {
                 repo.getMaintenanceScore() * 0.30 +
                 repo.getActivityScore() * 0.20
         );
+    }
+
+    @Override
+    public List<RepositoryContentResponse> getContents(String owner, String repo, String path, String ref) {
+        String normalizedPath = path == null ? "" : path.trim();
+        String cacheKey = "contents:" + owner + "/" + repo + "/" + normalizedPath + ":" + (ref == null ? "" : ref);
+        List<RepositoryContentResponse> cached = cacheService.get(cacheKey);
+        if (cached != null) return cached;
+
+        // Build the GitHub Contents API path. The directory path may contain
+        // slashes (e.g. "api-gateway/src/main/java"), so it is appended
+        // literally rather than as a Spring URI template variable.
+        String apiPath = "/repos/" + owner + "/" + repo + "/contents"
+                + (normalizedPath.isEmpty() ? "" : "/" + normalizedPath)
+                + (ref == null || ref.isBlank() ? "" : "?ref=" + ref);
+
+        try {
+            JsonNode apiResponse = restClient.get()
+                    .uri(apiPath)
+                    .retrieve()
+                    .body(JsonNode.class);
+
+            if (apiResponse == null) {
+                return null;
+            }
+
+            // Directory listings are arrays; a path pointing at a single file
+            // is a single object — normalize both into a list.
+            List<RepositoryContentResponse> entries = new ArrayList<>();
+            if (apiResponse.isArray()) {
+                for (JsonNode node : apiResponse) {
+                    entries.add(mapToContentResponse(node));
+                }
+            } else {
+                entries.add(mapToContentResponse(apiResponse));
+            }
+
+            cacheService.put(cacheKey, entries, BASE_TTL);
+            return entries;
+        } catch (HttpClientErrorException.NotFound e) {
+            // Path (or repo) does not exist — the caller treats this as "no
+            // such directory" and continues with other discovery paths.
+            return null;
+        } catch (HttpClientErrorException.TooManyRequests e) {
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
+        } catch (HttpClientErrorException.Forbidden e) {
+            throw new RuntimeException(
+                    "GitHub API rate limit exceeded. Configure a GitHub Personal Access Token (GITHUB_TOKEN) or wait until the rate limit resets."
+            );
+        } catch (Exception e) {
+            // Transient failures (network, 5xx, timeout) are not cached — the
+            // caller will retry on a subsequent match run.
+            return null;
+        }
+    }
+
+    private RepositoryContentResponse mapToContentResponse(JsonNode node) {
+        RepositoryContentResponse entry = new RepositoryContentResponse();
+        if (node == null) return entry;
+        entry.setName(node.path("name").asText(null));
+        entry.setType(node.path("type").asText(null));
+        entry.setPath(node.path("path").asText(null));
+        return entry;
     }
 
     private GitHubProfileResponse mapToProfileResponse(GitHubUserApiResponse api) {
