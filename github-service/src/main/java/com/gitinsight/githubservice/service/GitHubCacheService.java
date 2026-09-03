@@ -8,6 +8,7 @@ import com.gitinsight.githubservice.dto.response.CommitDiffListResponse;
 import com.gitinsight.githubservice.dto.response.DeveloperScoreResponse;
 import com.gitinsight.githubservice.dto.response.GitHubProfileResponse;
 import com.gitinsight.githubservice.dto.response.OrganizationAnalyticsResponse;
+import com.gitinsight.githubservice.dto.response.RepositoryContentResponse;
 import com.gitinsight.githubservice.dto.response.RepositoryResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -72,6 +73,7 @@ public class GitHubCacheService {
         m.put("contrib:", tf.constructParametricType(List.class, GitHubIntegrationService.GitHubContributor.class));
         m.put("repo-prs:", tf.constructParametricType(List.class, GitHubIntegrationService.GitHubPR.class));
         m.put("repo-issues:", tf.constructParametricType(List.class, GitHubIntegrationService.GitHubIssue.class));
+        m.put("contents:", tf.constructParametricType(List.class, RepositoryContentResponse.class));
         m.put("commit-quality:", tf.constructType(CommitAnalyticsResponse.class));
         m.put("commit-diffs:", tf.constructType(CommitDiffListResponse.class));
         m.put("org-overview:", tf.constructType(OrganizationAnalyticsResponse.class));

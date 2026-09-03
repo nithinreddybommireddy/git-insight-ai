@@ -83,8 +83,65 @@ public class JobMatcherService {
     /** Maximum directory depth when browsing the repo tree for source files. */
     private static final int SOURCE_TREE_DEPTH = 3;
 
-    /** High-signal file names to look for during source discovery. */
-    private static final Set<String> SOURCE_FILE_NAMES = Set.of(
+    /**
+     * Maximum root-level module directories probed per repository for nested
+     * monorepo evidence (build files, config files, source roots).
+     */
+    private static final int MAX_NESTED_MODULE_DIRS = 6;
+
+    /** Maximum subdirectories explored inside a module (depth-2 layouts, e.g. services/*). */
+    private static final int MAX_NESTED_SUBMODULES = 2;
+
+    /**
+     * Maximum descent levels through package-root directories (com/org/dev/...)
+     * to reach relevant packages (e.g. com/stschools/microservices/controller).
+     */
+    private static final int PACKAGE_ROOT_DESCENT_DEPTH = 4;
+
+    /** Maximum package-root branches followed per level during source descent. */
+    private static final int MAX_PACKAGE_ROOT_BRANCHES = 2;
+
+    /** Directory names never treated as package roots during source descent. */
+    private static final Set<String> NON_PACKAGE_DIRS = Set.of(
+            "target", "build", "generated", "resources", "webapp", "node_modules", "test"
+    );
+
+    /** Directory names never treated as candidate modules (noise / build output / docs). */
+    private static final Set<String> NON_MODULE_DIRS = Set.of(
+            ".git", ".github", ".idea", ".vscode",
+            "docs", "documentation", "scripts", "docker",
+            "kubernetes", "k8s", "deploy", "infra", "terraform",
+            "node_modules", "target", "build", "dist", "out",
+            "venv", ".venv", "assets", "images", "img", "fonts"
+    );
+
+    /**
+     * Root-level directory names already handled as standard source roots by
+     * root discovery — excluded from nested module probing to avoid double work.
+     */
+    private static final Set<String> STANDARD_ROOT_TOP_DIRS = Set.of(
+            "src", "backend", "app", "server", "api", "service", "services"
+    );
+
+    /** Substrings that make a directory name a likely project module. */
+    private static final List<String> MODULE_SIGNAL_SUBSTRINGS = List.of(
+            "service", "server", "backend", "frontend", "gateway", "eureka",
+            "client", "core", "common", "config", "web", "app", "auth",
+            "user", "module", "worker", "job", "consumer", "producer",
+            "scheduler", "repo", "api", "model", "domain"
+    );
+
+    /**
+     * Legacy exact-name files to look for during source discovery. Real-world
+     * source files almost never carry these bare names (they are
+     * AuthController.java, UserService.java, ...), so exact matching alone is
+     * deliberately supplemented by the bounded suffix patterns in
+     * {@link #SOURCE_FILE_SUFFIXES}. These exact names are still honored so
+     * nothing that previously matched regresses — including non-Java entry
+     * files (index.js, App.tsx, app.py) and Docker files that live at the
+     * repository root.
+     */
+    private static final Set<String> LEGACY_EXACT_FILE_NAMES = Set.of(
             "Application.java", "Application.kt",
             "Controller.java", "RestController.java",
             "Service.java", "ServiceImpl.java",
@@ -98,6 +155,110 @@ public class JobMatcherService {
             "index.py", "app.py", "main.py",
             "Dockerfile", "docker-compose.yml", "docker-compose.yaml"
     );
+
+    /**
+     * Bounded suffix patterns that make a Java source file a high-signal
+     * evidence candidate, ordered by signal strength (lower index = higher
+     * priority). Matching is suffix-only and deliberately finite — arbitrary
+     * {@code *.java} files are never crawled. *RestController.java files are
+     * matched by the "Controller.java" entry (RestController ends with
+     * Controller), and *FeignClient.java / *GatewayConfig.java are matched by
+     * the "Client.java" / "Config.java" entries.
+     *
+     * <p>Selection only: a file name never proves a skill. The fetched CONTENT
+     * still has to match {@link #sourcePatternMatches(String, String, String)}
+     * (e.g. AuthController.java must actually contain @RestController before
+     * REST API is credited, and *Service.java content must contain Eureka /
+     * Feign / Gateway signals before Microservices is credited).
+     */
+    private static final List<String> SOURCE_FILE_SUFFIXES = List.of(
+            "Controller.java",      // *Controller.java / *RestController.java
+            "Resource.java",        // JAX-RS style *Resource.java endpoints
+            "Application.java",     // Spring Boot entry points (ApiGatewayApplication.java)
+            "Gateway.java",         // API gateway classes
+            "Client.java",          // Feign / HTTP clients
+            "Config.java",          // Spring configuration (RedisConfig.java, GatewayConfig.java)
+            "Configuration.java",
+            "Service.java",         // service-layer classes
+            "ServiceImpl.java",
+            "Repository.java",      // Spring Data repositories
+            "Mapper.java",
+            "Application.kt"        // Kotlin entry points
+    );
+
+    /** Rank below every suffix match, used for legacy exact-name files. */
+    private static final int LEGACY_EXACT_RANK = SOURCE_FILE_SUFFIXES.size();
+
+    /**
+     * High-signal source-file name set used by the discovery call sites
+     * ({@code SOURCE_FILE_NAMES.contains(name)}). Exact legacy names plus
+     * bounded suffix-pattern matching, so real-world files such as
+     * AuthController.java, UserRestController.java, ApiGatewayApplication.java,
+     * RedisConfig.java or UserServiceImpl.java are selected everywhere — at the
+     * repository root, inside {@code src/main/java}, during package descent and
+     * inside nested module trees — while arbitrary {@code *.java} files are
+     * never crawled.
+     */
+    private static final Set<String> SOURCE_FILE_NAMES = new SourceFilePatternSet();
+
+    /**
+     * Set whose {@code contains} is the exact-name OR bounded-suffix test from
+     * {@link #isHighSignalSourceFile(String)}. Iteration/size expose only the
+     * legacy exact names (the suffix space is unbounded by design); nothing in
+     * the discovery code iterates the set.
+     */
+    private static final class SourceFilePatternSet extends java.util.AbstractSet<String> {
+        @Override
+        public boolean contains(Object o) {
+            if (!(o instanceof String name)) return false;
+            return LEGACY_EXACT_FILE_NAMES.contains(name) || sourceFileSuffixRank(name) >= 0;
+        }
+
+        @Override
+        public java.util.Iterator<String> iterator() {
+            return LEGACY_EXACT_FILE_NAMES.iterator();
+        }
+
+        @Override
+        public int size() {
+            return LEGACY_EXACT_FILE_NAMES.size();
+        }
+    }
+
+    /**
+     * Whether a file name is a high-signal source evidence candidate: either a
+     * legacy exact name (Dockerfile, index.js, App.java, ...) or a file ending
+     * with a recognized high-signal suffix (AuthController.java, OrderService.java,
+     * ApiGatewayApplication.java, RedisConfig.java, ...).
+     */
+    static boolean isHighSignalSourceFile(String name) {
+        if (name == null) return false;
+        return LEGACY_EXACT_FILE_NAMES.contains(name) || sourceFileSuffixRank(name) >= 0;
+    }
+
+    /**
+     * Index of the first matching high-signal suffix, or -1 when the name does
+     * not end with any recognized suffix.
+     */
+    static int sourceFileSuffixRank(String name) {
+        if (name == null) return -1;
+        for (int i = 0; i < SOURCE_FILE_SUFFIXES.size(); i++) {
+            if (name.endsWith(SOURCE_FILE_SUFFIXES.get(i))) return i;
+        }
+        return -1;
+    }
+
+    /**
+     * Evidence priority of a source file name — lower is fetched first. Suffix
+     * matches rank by {@link #SOURCE_FILE_SUFFIXES} order (controllers before
+     * services); legacy exact-name files rank below all suffix matches;
+     * non-candidates return {@link Integer#MAX_VALUE}.
+     */
+    static int sourceFilePriority(String name) {
+        int rank = sourceFileSuffixRank(name);
+        if (rank >= 0) return rank;
+        return LEGACY_EXACT_FILE_NAMES.contains(name) ? LEGACY_EXACT_RANK : Integer.MAX_VALUE;
+    }
 
     /** Java package directories that signal source code presence. */
     private static final Set<String> JAVA_SRC_PACKAGES = Set.of(
@@ -875,18 +1036,28 @@ public class JobMatcherService {
     }
 
     /**
-     * Budget-aware directory API call for source discovery. Returns null if
-     * budget (count or time) is exhausted.
+     * Budget-aware GitHub Contents API call for source/build discovery.
+     * Returns null if the budget (count or time) is exhausted, the directory
+     * does not exist, or github-service is unreachable. The path is sent as a
+     * query parameter so nested paths (e.g. "api-gateway/src/main/java")
+     * survive URL encoding intact and the github-service endpoint can forward
+     * them to the GitHub Contents API as a literal path.
      */
-    private Object budgetedDirFetch(String owner, String repo, String branch, String path, MatchContext ctx) {
+    private List<Map<String, Object>> budgetedDirFetch(String owner, String repo, String branch, String path, MatchContext ctx) {
         if (ctx.evidenceBudgetExhausted()) return null;
         ctx.evidenceRequestBudget--;
         try {
             RestClient client = dynamicTimeoutClient(ctx.remainingTimeMs(), 5_000, 20_000);
-            return client.get()
-                    .uri("/api/github/{owner}/{repo}/contents/{path}?ref={branch}", owner, repo, path, branch)
+            ApiResponse<?> response = client.get()
+                    .uri("/api/github/{owner}/{repo}/contents?path={path}&ref={branch}", owner, repo, path, branch)
                     .retrieve()
-                    .body(Object.class);
+                    .body(new ParameterizedTypeReference<ApiResponse<Object>>() {});
+            if (response == null || !response.isSuccess() || response.getData() == null) {
+                return null;
+            }
+            return objectMapper.convertValue(
+                    response.getData(),
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
         } catch (Exception e) {
             return null;
         }
@@ -980,7 +1151,20 @@ public class JobMatcherService {
                 if (allSkillsConfirmed) break;
             }
 
-            // Source discovery: ONLY when skills are still unconfirmed
+            // Nested module discovery (monorepos): ONLY when skills are still
+            // unconfirmed. Probes bounded module dirs for build/config files and
+            // nested source roots, accumulating evidence into this repo's corpus.
+            if (!allSkillsConfirmed && !required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
+                NestedModuleResult nmr = fetchNestedModuleEvidence(owner, repo, branch, required, stats, ctx, confirmedSkills);
+                if (!nmr.content.isBlank()) {
+                    branchEvidence.append("\n[nested-modules]\n").append(nmr.content).append('\n');
+                    found += nmr.buildFilesFound() + nmr.sourceFilesFetched();
+                }
+                allSkillsConfirmed = !required.isEmpty()
+                        && required.stream().allMatch(confirmedSkills::contains);
+            }
+
+            // Root source discovery: ONLY when skills are still unconfirmed
             if (!allSkillsConfirmed && !required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
                 SourceEvidenceResult ser = fetchSourceEvidence(owner, repo, branch, required, stats, ctx);
                 if (!ser.content.isBlank()) {
@@ -1062,7 +1246,8 @@ public class JobMatcherService {
         List<String> skillsDetected = new ArrayList<>();
 
         for (String path : sourcePaths) {
-            if (fetched >= MAX_SOURCE_FILES_PER_REPO) break;
+            // Per-repository cap shared with nested-module source discovery
+            if (fetched >= MAX_SOURCE_FILES_PER_REPO || stats.sourceFilesFound >= MAX_SOURCE_FILES_PER_REPO) break;
 
             // Early stopping: stop once all required skills are covered
             if (required.stream().allMatch(s -> skillsDetected.contains(s))) {
@@ -1131,13 +1316,8 @@ public class JobMatcherService {
 
         try {
             // Budget-aware root directory listing
-            Object rawResponse = budgetedDirFetch(owner, repo, branch, "", ctx);
-            if (rawResponse == null) return paths;
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> rootItems = objectMapper.convertValue(
-                    rawResponse,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+            List<Map<String, Object>> rootItems = budgetedDirFetch(owner, repo, branch, "", ctx);
+            if (rootItems == null) return paths;
 
             // Collect available source roots and root-level high-signal files
             Set<String> availableRoots = new LinkedHashSet<>();
@@ -1148,7 +1328,7 @@ public class JobMatcherService {
                 String type = (String) item.get("type");
                 if (name == null || type == null) continue;
 
-                if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)) {
+                if ("file".equals(type) && isHighSignalSourceFile(name)) {
                     if (seen.add(name)) paths.add(name);
                 }
 
@@ -1194,6 +1374,11 @@ public class JobMatcherService {
         log.debug("repo={}/{} sourceRootsChecked={} sourcePathsFound={}",
                 owner, repo, rootsChecked, paths.size());
 
+        // Highest-signal files first (controllers/applications before services),
+        // then cap at the per-repository source-file budget.
+        if (paths.size() > 1) {
+            paths.sort(Comparator.comparingInt(JobMatcherService::sourceFilePriority));
+        }
         if (paths.size() > MAX_SOURCE_FILES_PER_REPO) {
             paths = paths.subList(0, MAX_SOURCE_FILES_PER_REPO);
         }
@@ -1208,13 +1393,8 @@ public class JobMatcherService {
                                             List<String> required, MatchContext ctx,
                                             List<String> paths, Set<String> seen) {
         try {
-            Object rawResponse = budgetedDirFetch(owner, repo, branch, MULTI_MODULE_SERVICES_ROOT, ctx);
-            if (rawResponse == null) return;
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> items = objectMapper.convertValue(
-                    rawResponse,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+            List<Map<String, Object>> items = budgetedDirFetch(owner, repo, branch, MULTI_MODULE_SERVICES_ROOT, ctx);
+            if (items == null) return;
 
             for (Map<String, Object> item : items) {
                 if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
@@ -1237,6 +1417,351 @@ public class JobMatcherService {
         }
     }
 
+    // ────────────────────────── Nested module discovery ──────────────────────────
+
+    /**
+     * A directory name is a likely project module when it contains a common
+     * module signal (service, gateway, backend, api, ...). This is a pure
+     * discovery/selection signal — directory names alone never prove
+     * Microservices; actual evidence must come from Eureka / Spring Cloud /
+     * Feign / Gateway content inside the module.
+     */
+    static boolean isModuleLikeDir(String name) {
+        if (name == null || name.isBlank()) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        for (String signal : MODULE_SIGNAL_SUBSTRINGS) {
+            if (lower.contains(signal)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * A directory is a package root when its name is a single lowercase word
+     * (letters/digits/underscores) — e.g. com, org, dev, stschools,
+     * microservices, api_gateway. Used to descend through standard Java
+     * package layouts that hide relevant packages (controller/service/...)
+     * below the domain root. Bounded callers: never an unbounded crawl.
+     */
+    static boolean isPackageRootDir(String name) {
+        if (name == null || name.isBlank()) return false;
+        String lower = name.toLowerCase(Locale.ROOT);
+        if (lower.startsWith(".")) return false;
+        if (NON_PACKAGE_DIRS.contains(lower)) return false;
+        if (lower.length() > 32) return false;
+        for (int i = 0; i < lower.length(); i++) {
+            char c = lower.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '_')) return false;
+        }
+        return true;
+    }
+
+    /**
+     * Select root-level module directories to probe for nested evidence.
+     * Excludes hidden dirs, non-module noise, and standard source roots already
+     * handled by root discovery. Module-like names (api-gateway, auth-service)
+     * are probed before generic dirs. Bounded by {@code limit} — never an
+     * unbounded crawl.
+     */
+    static List<String> selectModuleDirs(List<Map<String, Object>> rootItems, int limit) {
+        if (rootItems == null || rootItems.isEmpty() || limit <= 0) return List.of();
+        List<String> moduleLike = new ArrayList<>();
+        List<String> generic = new ArrayList<>();
+        for (Map<String, Object> item : rootItems) {
+            if (item == null) continue;
+            Object nameObj = item.get("name");
+            Object typeObj = item.get("type");
+            if (!(nameObj instanceof String name) || !"dir".equals(typeObj)) continue;
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (lower.startsWith(".")) continue;
+            if (NON_MODULE_DIRS.contains(lower)) continue;
+            if (STANDARD_ROOT_TOP_DIRS.contains(lower)) continue;
+            (isModuleLikeDir(lower) ? moduleLike : generic).add(name);
+        }
+        List<String> ordered = new ArrayList<>(moduleLike);
+        ordered.addAll(generic);
+        return ordered.size() > limit ? List.copyOf(ordered.subList(0, limit)) : List.copyOf(ordered);
+    }
+
+    /**
+     * Select subdirectories inside a module for depth-2 probing
+     * (e.g. services/auth-service, backend/services). Bounded by {@code limit}.
+     */
+    static List<String> nestedSubmoduleDirs(List<Map<String, Object>> moduleItems, int limit) {
+        if (moduleItems == null || moduleItems.isEmpty() || limit <= 0) return List.of();
+        List<String> dirs = new ArrayList<>();
+        for (Map<String, Object> item : moduleItems) {
+            if (item == null) continue;
+            Object nameObj = item.get("name");
+            Object typeObj = item.get("type");
+            if (!(nameObj instanceof String name) || !"dir".equals(typeObj)) continue;
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (lower.startsWith(".")) continue;
+            if (NON_MODULE_DIRS.contains(lower)) continue;
+            if (lower.equals("src")) continue; // handled by source-root discovery
+            if (lower.equals("services") || isModuleLikeDir(lower)) dirs.add(name);
+        }
+        return dirs.size() > limit ? List.copyOf(dirs.subList(0, limit)) : List.copyOf(dirs);
+    }
+
+    /**
+     * Which build files to fetch inside a module, given the module's directory
+     * listing and the JD's required skills. Mirrors the root-level
+     * {@link #evidenceFilesFor} priority: primary build file first, then
+     * fallbacks. Config files (application.yml etc.) are returned by
+     * {@link #nestedConfigFilesFor} and fetched separately while skills remain
+     * unconfirmed.
+     */
+    static List<String> nestedBuildFilesFor(Set<String> entryNames, List<String> required) {
+        if (entryNames == null || entryNames.isEmpty()) return List.of();
+        Set<String> normalized = required == null ? Set.of()
+                : required.stream().filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
+        boolean javaEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("java") || s.contains("spring") || s.contains("hibernate") ||
+                s.contains("microservice") || s.contains("rest api") || s.contains("quarkus") ||
+                s.contains("micronaut"));
+        boolean javascriptEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("javascript") || s.contains("typescript") || s.equals("react") ||
+                s.contains("node.js") || s.contains("nodejs") || s.contains("express"));
+        boolean dockerEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("docker") || s.contains("kubernetes") || s.contains("ci/cd"));
+
+        List<String> files = new ArrayList<>();
+        if (javaEcosystem) {
+            for (String f : List.of("pom.xml", "build.gradle", "build.gradle.kts")) {
+                if (entryNames.contains(f)) files.add(f);
+            }
+        }
+        if (javascriptEcosystem && entryNames.contains("package.json")) files.add("package.json");
+        if (dockerEcosystem) {
+            for (String f : List.of("Dockerfile", "docker-compose.yml", "docker-compose.yaml")) {
+                if (entryNames.contains(f)) files.add(f);
+            }
+        }
+        return List.copyOf(files);
+    }
+
+    /**
+     * Config files to fetch inside a module when build files did not confirm
+     * all skills (e.g. application.yml carrying Redis/PostgreSQL configuration).
+     */
+    static List<String> nestedConfigFilesFor(Set<String> entryNames, List<String> required) {
+        if (entryNames == null || entryNames.isEmpty()) return List.of();
+        Set<String> normalized = required == null ? Set.of()
+                : required.stream().filter(Objects::nonNull)
+                .map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
+        boolean configRelevant = normalized.stream().anyMatch(s ->
+                s.contains("java") || s.contains("spring") || s.contains("hibernate") ||
+                s.contains("microservice") || s.contains("rest api") || s.contains("redis") ||
+                s.contains("quarkus") || s.contains("micronaut"));
+        if (!configRelevant) return List.of();
+        List<String> files = new ArrayList<>();
+        for (String f : List.of("application.yml", "application.yaml", "application.properties")) {
+            if (entryNames.contains(f)) files.add(f);
+        }
+        return List.copyOf(files);
+    }
+
+    private static boolean allSkillsConfirmed(List<String> required, Set<String> confirmedSkills) {
+        return !required.isEmpty() && required.stream().allMatch(confirmedSkills::contains);
+    }
+
+    private void updateConfirmedSkills(StringBuilder corpus, List<String> required, Set<String> confirmedSkills) {
+        if (corpus == null || required == null || required.isEmpty()) return;
+        String lower = corpus.toString().toLowerCase(Locale.ROOT);
+        for (String skill : required) {
+            if (!confirmedSkills.contains(skill) && matches(lower, skill)) {
+                confirmedSkills.add(skill);
+            }
+        }
+    }
+
+    private record NestedModuleResult(String content, int modulesDiscovered, int buildFilesFound,
+                                      int sourceRootsDiscovered, int sourceFilesFetched) {
+        NestedModuleResult() { this("", 0, 0, 0, 0); }
+    }
+
+    /**
+     * Discover evidence inside nested module directories (monorepos) such as
+     * {@code api-gateway/pom.xml}, {@code fixmate-backend/src/main/java/.../Controller.java}.
+     *
+     * <p>Bounded discovery — maximum depth 2 below the repository root:
+     * <ol>
+     *   <li>Root listing → up to {@link #MAX_NESTED_MODULE_DIRS} module dirs</li>
+     *   <li>Per module: build file (pom.xml/gradle/package.json/Dockerfile), then
+     *       config files (application.yml) while skills remain unconfirmed</li>
+     *   <li>Depth-2: up to {@link #MAX_NESTED_SUBMODULES} submodule dirs per module
+     *       (pom.xml/package.json + nested source root)</li>
+     *   <li>Nested source roots under module directories, capped per repository</li>
+     * </ol>
+     *
+     * <p>All calls decrement the per-candidate request budget. Evidence from
+     * multiple modules accumulates into the SAME per-repository corpus (module
+     * A's evidence is never overwritten by module B's). Cache keys keep the
+     * full nested path: {@code owner/repo/branch/module/path/file}.
+     */
+    private NestedModuleResult fetchNestedModuleEvidence(String owner, String repo, String branch,
+                                                         List<String> required, EvidenceStats stats,
+                                                         MatchContext ctx, Set<String> confirmedSkills) {
+        NestedModuleResult result = new NestedModuleResult();
+        if (ctx.evidenceBudgetExhausted() || required.isEmpty()) return result;
+
+        List<Map<String, Object>> rootItems = budgetedDirFetch(owner, repo, branch, "", ctx);
+        if (rootItems == null) return result;
+
+        List<String> moduleDirs = selectModuleDirs(rootItems, MAX_NESTED_MODULE_DIRS);
+        if (moduleDirs.isEmpty()) return result;
+
+        StringBuilder evidence = new StringBuilder();
+        StringBuilder corpus = new StringBuilder();
+        int modulesProbed = 0;
+        int buildFilesFound = 0;
+        int sourceRootsDiscovered = 0;
+        int sourceFilesFetched = 0;
+
+        for (String module : moduleDirs) {
+            if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+
+            List<Map<String, Object>> moduleItems = budgetedDirFetch(owner, repo, branch, module, ctx);
+            if (moduleItems == null) continue;
+            modulesProbed++;
+
+            Set<String> names = new HashSet<>();
+            for (Map<String, Object> item : moduleItems) {
+                if (item != null && item.get("name") instanceof String n) names.add(n);
+            }
+
+            // 1) Module build files (primary evidence: spring-boot-starter-web → Spring Boot,
+            //    spring-cloud-starter-gateway + eureka → Microservices, Dockerfile → Docker)
+            for (String f : nestedBuildFilesFor(names, required)) {
+                if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + f, ctx);
+                if (fr == null) break; // budget exhausted
+                if (!fr.content.isBlank()) {
+                    evidence.append("\n[file ").append(module).append("/").append(f).append("]\n")
+                            .append(fr.content).append('\n');
+                    corpus.append(fr.content).append(' ');
+                    buildFilesFound++;
+                    stats.filesFound++;
+                    updateConfirmedSkills(corpus, required, confirmedSkills);
+                } else {
+                    stats.filesMissing++;
+                }
+            }
+
+            // 2) Module config files while skills remain unconfirmed
+            if (!allSkillsConfirmed(required, confirmedSkills) && !ctx.evidenceBudgetExhausted()) {
+                for (String f : nestedConfigFilesFor(names, required)) {
+                    if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                    FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + f, ctx);
+                    if (fr == null) break; // budget exhausted
+                    if (!fr.content.isBlank()) {
+                        evidence.append("\n[file ").append(module).append("/").append(f).append("]\n")
+                                .append(fr.content).append('\n');
+                        corpus.append(fr.content).append(' ');
+                        buildFilesFound++;
+                        stats.filesFound++;
+                        updateConfirmedSkills(corpus, required, confirmedSkills);
+                    } else {
+                        stats.filesMissing++;
+                    }
+                }
+            }
+
+            // 3) Depth-2 submodules (services/auth-service, backend/services/...)
+            if (!allSkillsConfirmed(required, confirmedSkills) && !ctx.evidenceBudgetExhausted()) {
+                for (String sub : nestedSubmoduleDirs(moduleItems, MAX_NESTED_SUBMODULES)) {
+                    if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                    List<Map<String, Object>> subItems = budgetedDirFetch(owner, repo, branch, module + "/" + sub, ctx);
+                    if (subItems == null) continue;
+
+                    Set<String> subNames = new HashSet<>();
+                    for (Map<String, Object> item : subItems) {
+                        if (item != null && item.get("name") instanceof String n) subNames.add(n);
+                    }
+
+                    // Depth-2 build file: pom.xml / package.json only (bounded)
+                    for (String f : List.of("pom.xml", "package.json")) {
+                        if (!subNames.contains(f)) continue;
+                        if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                        FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + sub + "/" + f, ctx);
+                        if (fr == null) break; // budget exhausted
+                        if (!fr.content.isBlank()) {
+                            evidence.append("\n[file ").append(module).append("/").append(sub).append("/").append(f).append("]\n")
+                                    .append(fr.content).append('\n');
+                            corpus.append(fr.content).append(' ');
+                            buildFilesFound++;
+                            stats.filesFound++;
+                            updateConfirmedSkills(corpus, required, confirmedSkills);
+                        } else {
+                            stats.filesMissing++;
+                        }
+                    }
+
+                    // Depth-2 nested source root
+                    if (subNames.contains("src") && !allSkillsConfirmed(required, confirmedSkills)
+                            && stats.sourceFilesFound < MAX_SOURCE_FILES_PER_REPO) {
+                        sourceRootsDiscovered++;
+                        sourceFilesFetched += fetchNestedSourceFiles(owner, repo, branch, required, stats, ctx,
+                                confirmedSkills, evidence, module + "/" + sub + "/src/main/java", MAX_SOURCE_FILES_PER_REPO);
+                    }
+                }
+            }
+
+            // 4) Nested source root (*/src/main/java) with per-repo file cap
+            if (names.contains("src") && !allSkillsConfirmed(required, confirmedSkills)
+                    && !ctx.evidenceBudgetExhausted()
+                    && stats.sourceFilesFound < MAX_SOURCE_FILES_PER_REPO) {
+                sourceRootsDiscovered++;
+                sourceFilesFetched += fetchNestedSourceFiles(owner, repo, branch, required, stats, ctx,
+                        confirmedSkills, evidence, module + "/src/main/java", MAX_SOURCE_FILES_PER_REPO);
+            }
+        }
+
+        log.debug("repo={}/{} defaultBranch={} modulesDiscovered={} modulesProbed={} buildFilesDiscovered={} " +
+                        "sourceRootsDiscovered={} sourceFilesFetched={} skillsAdded={}",
+                owner, repo, branch, moduleDirs.size(), modulesProbed, buildFilesFound,
+                sourceRootsDiscovered, sourceFilesFetched, new ArrayList<>(confirmedSkills));
+
+        return new NestedModuleResult(evidence.toString(), moduleDirs.size(), buildFilesFound,
+                sourceRootsDiscovered, sourceFilesFetched);
+    }
+
+    /**
+     * Discover and fetch source files under a nested Java source root.
+     * Honors the per-repository {@link #MAX_SOURCE_FILES_PER_REPO} cap via
+     * {@code stats.sourceFilesFound} (shared with root source discovery).
+     * Returns the number of files actually fetched.
+     */
+    private int fetchNestedSourceFiles(String owner, String repo, String branch, List<String> required,
+                                       EvidenceStats stats, MatchContext ctx, Set<String> confirmedSkills,
+                                       StringBuilder evidence, String sourceRoot, int cap) {
+        int fetched = 0;
+        List<String> paths = discoverJavaSourcePaths(owner, repo, branch, sourceRoot, required, ctx);
+        for (String p : paths) {
+            if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+            if (stats.sourceFilesFound >= cap) break;
+            FileResult fr = budgetedFetch(owner, repo, branch, p, ctx);
+            if (fr == null) break; // budget exhausted
+            if (!fr.content.isBlank()) {
+                String ev = extractSourceEvidence(fr.content, p, required);
+                if (!ev.isBlank()) {
+                    evidence.append("\n[file ").append(p).append("]\n").append(ev).append('\n');
+                    fetched++;
+                    stats.sourceFilesFound++;
+                    for (String skill : required) {
+                        if (!confirmedSkills.contains(skill) && sourcePatternMatches(fr.content, p, skill)) {
+                            confirmedSkills.add(skill);
+                        }
+                    }
+                }
+            } else {
+                stats.sourceFilesMissing++;
+            }
+        }
+        return fetched;
+    }
+
     private List<String> discoverJavaSourcePaths(String owner, String repo, String branch,
                                                   String basePath, List<String> required,
                                                   MatchContext ctx) {
@@ -1246,13 +1771,8 @@ public class JobMatcherService {
         Set<String> relevantPackages = filterRelevantPackages(normalizedRequired);
 
         try {
-            Object rawResponse = budgetedDirFetch(owner, repo, branch, basePath, ctx);
-            if (rawResponse == null) return paths;
-
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> items = objectMapper.convertValue(
-                    rawResponse,
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+            List<Map<String, Object>> items = budgetedDirFetch(owner, repo, branch, basePath, ctx);
+            if (items == null) return paths;
 
             Queue<String> dirsToExplore = new java.util.LinkedList<>();
 
@@ -1269,18 +1789,61 @@ public class JobMatcherService {
                 }
             }
 
+            // Package-root descent: standard Java layouts hide relevant packages
+            // below the domain root (com/stschools/microservices/controller, ...).
+            // Bounded: at most MAX_PACKAGE_ROOT_BRANCHES branches per level,
+            // at most PACKAGE_ROOT_DESCENT_DEPTH levels, all budget-decremented.
+            if (dirsToExplore.isEmpty() && paths.size() < MAX_SOURCE_FILES_PER_REPO
+                    && ctx.evidenceRequestBudget > 0) {
+                Queue<String> packageRoots = new java.util.LinkedList<>();
+                for (Map<String, Object> item : items) {
+                    String name = (String) item.get("name");
+                    String type = (String) item.get("type");
+                    if (name == null || type == null || !"dir".equals(type)) continue;
+                    String lower = name.toLowerCase(Locale.ROOT);
+                    if (!relevantPackages.contains(lower) && isPackageRootDir(name)) {
+                        packageRoots.add(basePath + "/" + name);
+                        if (packageRoots.size() >= MAX_PACKAGE_ROOT_BRANCHES) break;
+                    }
+                }
+                int descent = 0;
+                while (!packageRoots.isEmpty() && descent < PACKAGE_ROOT_DESCENT_DEPTH
+                        && dirsToExplore.isEmpty()
+                        && paths.size() < MAX_SOURCE_FILES_PER_REPO
+                        && ctx.evidenceRequestBudget > 0) {
+                    String dir = packageRoots.poll();
+                    List<Map<String, Object>> dirItems = budgetedDirFetch(owner, repo, branch, dir, ctx);
+                    if (dirItems == null) continue;
+                    int branchesAdded = 0;
+                    for (Map<String, Object> di : dirItems) {
+                        String name = (String) di.get("name");
+                        String type = (String) di.get("type");
+                        if (name == null || type == null) continue;
+                        if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)
+                                && paths.size() < MAX_SOURCE_FILES_PER_REPO) {
+                            paths.add(dir + "/" + name);
+                        }
+                        if ("dir".equals(type)) {
+                            String lower = name.toLowerCase(Locale.ROOT);
+                            if (relevantPackages.contains(lower)) {
+                                dirsToExplore.add(dir + "/" + name);
+                            } else if (isPackageRootDir(name) && branchesAdded < MAX_PACKAGE_ROOT_BRANCHES) {
+                                packageRoots.add(dir + "/" + name);
+                                branchesAdded++;
+                            }
+                        }
+                    }
+                    descent++;
+                }
+            }
+
             int depth = 0;
             while (!dirsToExplore.isEmpty() && depth < SOURCE_TREE_DEPTH
                     && paths.size() < MAX_SOURCE_FILES_PER_REPO && ctx.evidenceRequestBudget > 0) {
                 String dir = dirsToExplore.poll();
                 try {
-                    Object dirResponse = budgetedDirFetch(owner, repo, branch, dir, ctx);
-                    if (dirResponse == null) continue;
-
-                    @SuppressWarnings("unchecked")
-                    List<Map<String, Object>> dirItems = objectMapper.convertValue(
-                            dirResponse,
-                            objectMapper.getTypeFactory().constructCollectionType(List.class, Map.class));
+                    List<Map<String, Object>> dirItems = budgetedDirFetch(owner, repo, branch, dir, ctx);
+                    if (dirItems == null) continue;
 
                     for (Map<String, Object> di : dirItems) {
                         String name = (String) di.get("name");
@@ -1585,7 +2148,9 @@ public class JobMatcherService {
 
     private FileResult fetchRawRepositoryFile(String owner, String repo, String branch, String file,
                                                 MatchContext ctx) {
-        String key = owner + "/" + repo + "/" + branch + "/" + file;
+        // Nested module paths keep their full path in the cache key:
+        // owner/repo/branch/api-gateway/pom.xml — never collapsed to the root.
+        String key = evidenceCacheKey(owner, repo, branch, file);
         String cached = evidenceCache.get(key);
         if (cached != null) {
             return new FileResult(cached, null);
@@ -1632,6 +2197,11 @@ public class JobMatcherService {
             evidenceCache.put(key, "");
             return new FileResult("", "unknown");
         }
+    }
+
+    /** Cache key for a single evidence file: owner/repo/branch/full-path. */
+    static String evidenceCacheKey(String owner, String repo, String branch, String file) {
+        return owner + "/" + repo + "/" + branch + "/" + file;
     }
 
     private static RestClient buildRawGithubClient() {

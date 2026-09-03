@@ -51,6 +51,21 @@ public class GitHubController {
         return new ApiResponse<>(true, "Repositories fetched successfully.", repos);
     }
 
+    /**
+     * List the contents of a repository directory at a specific branch/ref.
+     * Used by auth-service's Job Matcher for bounded source-root and nested
+     * module discovery. Returns {@code null} data when the path does not exist.
+     */
+    @GetMapping("/{owner}/{repo}/contents")
+    public ApiResponse<List<RepositoryContentResponse>> getRepositoryContents(
+            @PathVariable String owner,
+            @PathVariable String repo,
+            @RequestParam(required = false) String path,
+            @RequestParam(required = false) String ref) {
+        List<RepositoryContentResponse> contents = gitHubService.getContents(owner, repo, path, ref);
+        return new ApiResponse<>(true, "Repository contents fetched successfully.", contents);
+    }
+
     @GetMapping("/{username}/score")
     public ApiResponse<DeveloperScoreResponse> getDeveloperScore(@PathVariable String username) {
         DeveloperScoreResponse score = developerScoreService.getScore(username);
