@@ -39,7 +39,28 @@ public record JobMatchResponse(
             List<String> matchedSkills,
             List<String> missingSkills,
             List<String> languages,
-            List<String> topRepos
+            List<String> topRepos,
+            List<SkillEvidenceView> skillEvidence  // per-skill evidence records (best evidence per skill)
+    ) {
+    }
+
+    /**
+     * Deterministic evidence record for one matched skill.
+     *
+     * <p>Confidence: HIGH = source/build/config evidence, MEDIUM = documentation
+     * evidence, LOW = metadata only. Evidence is recorded per skill from the
+     * first (highest-confidence) source that proves it; the AI layer may never
+     * override these records.
+     */
+    public record SkillEvidenceView(
+            String skill,
+            String confidence,      // HIGH | MEDIUM | LOW
+            String repository,
+            String module,          // "-" for repository-root evidence
+            String file,
+            String branch,
+            String evidenceType,    // METADATA | DOCUMENTATION | BUILD | CONFIGURATION | SOURCE | PLATFORM
+            String evidencePattern  // exact pattern/annotation that matched
     ) {
     }
 

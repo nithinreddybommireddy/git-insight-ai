@@ -153,10 +153,10 @@ class JobMatcherServiceTest {
     void mergesAiExplanationsIntoDeterministicOrder() {
         var alice = new JobMatchResponse.JobMatchCandidate(
                 "alice", "Alice", null, null, 80, "Expert 🏅", 90, 100,
-                List.of("Java", "Spring Boot"), List.of(), List.of("Java"), List.of("api"));
+                List.of("Java", "Spring Boot"), List.of(), List.of("Java"), List.of("api"), List.of());
         var bob = new JobMatchResponse.JobMatchCandidate(
                 "bob", "Bob", null, null, 60, "Proficient 💼", 50, 50,
-                List.of(), List.of("Java"), List.of("Go"), List.of("tool"));
+                List.of(), List.of("Java"), List.of("Go"), List.of("tool"), List.of());
         var results = List.of(alice, bob);
 
         var byUsername = java.util.Map.of("alice",
@@ -176,10 +176,10 @@ class JobMatcherServiceTest {
     void mergeSkipsCandidatesWithoutAiExplanation() {
         var alice = new JobMatchResponse.JobMatchCandidate(
                 "alice", "Alice", null, null, 80, "Expert 🏅", 90, 100,
-                List.of("Java"), List.of(), List.of("Java"), List.of("api"));
+                List.of("Java"), List.of(), List.of("Java"), List.of("api"), List.of());
         var bob = new JobMatchResponse.JobMatchCandidate(
                 "bob", "Bob", null, null, 60, "Proficient 💼", 50, 50,
-                List.of(), List.of("Java"), List.of("Go"), List.of("tool"));
+                List.of(), List.of("Java"), List.of("Go"), List.of("tool"), List.of());
 
         var merged = JobMatcherService.mergeAiExplanations(List.of(alice, bob), java.util.Map.of());
 
@@ -190,7 +190,7 @@ class JobMatcherServiceTest {
     void mergeFillsMissingAiFieldsWithDefaults() {
         var alice = new JobMatchResponse.JobMatchCandidate(
                 "alice", "Alice", null, null, 80, "Expert 🏅", 90, 100,
-                List.of("Java"), List.of(), List.of("Java"), List.of("api"));
+                List.of("Java"), List.of(), List.of("Java"), List.of("api"), List.of());
         var byUsername = java.util.Map.of("alice",
                 new JobMatcherService.AiExplanationView("alice", null, null, null, null, null, null));
 
@@ -706,7 +706,7 @@ class JobMatcherServiceTest {
     void aiExplanationMergeBehaviorUnchanged() {
         var alice = new JobMatchResponse.JobMatchCandidate(
                 "alice", "Alice", null, null, 80, "Expert", 90, 100,
-                List.of("Java"), List.of(), List.of("Java"), List.of("api"));
+                List.of("Java"), List.of(), List.of("Java"), List.of("api"), List.of());
         var byUsername = java.util.Map.of("alice",
                 new JobMatcherService.AiExplanationView("alice", 1, "Strong", "Great", List.of("Java"), List.of(), "Go"));
 

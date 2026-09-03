@@ -525,7 +525,8 @@ class CandidateIsolationTest {
                             username, username, null, null,
                             75, "Advanced", 70, 50,
                             List.of("Java"), List.of("Spring Boot"),
-                            List.of("Java"), List.of("repo1"));
+                            List.of("Java"), List.of("repo1"),
+                            List.of());
                     results.add(c);
                 } catch (Exception e) {
                     failed++;

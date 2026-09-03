@@ -77,11 +77,46 @@ public class JobMatcherService {
     private static final int MAX_EVIDENCE_CHARS_PER_FILE = 8_000;
     private static final int MAX_TOTAL_EVIDENCE_PER_REPO = 24_000;
 
-    /** Maximum source files to fetch per repository (bounded GitHub requests). */
+    /** Maximum source files to fetch per repository in SYNC mode (bounded GitHub requests). */
     private static final int MAX_SOURCE_FILES_PER_REPO = 5;
 
+    /**
+     * Maximum source files to fetch per repository in ASYNC FULL-EVIDENCE mode.
+     * Deliberately separate from {@link #MAX_SOURCE_FILES_PER_REPO}: the async
+     * worker runs in the background (no 60s HTTP deadline), so it may fetch
+     * deeper evidence without affecting the synchronous endpoint's latency.
+     * Configurable via FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO.
+     */
+    static final int FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO = 20;
+
+    /**
+     * Minimum number of repositories that must receive FULL evidence analysis
+     * per candidate (deep/async mode): at least 10 repositories when the
+     * candidate has >= 10, otherwise ALL available repositories. "Analyzed"
+     * means actual evidence inspection (docs/build/config/nested-module/source),
+     * not merely metadata retrieval. Configurable via MIN_REPOSITORY_COVERAGE.
+     */
+    static final int MIN_REPOSITORY_COVERAGE = 10;
+
+    /**
+     * Per-candidate evidence request budget in ASYNC FULL-EVIDENCE mode.
+     * Background jobs are not bound by the 50-request sync budget; this deeper
+     * budget lets every candidate search ALL relevant evidence categories
+     * before any skill is declared missing. Configurable via
+     * FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE.
+     */
+    static final int FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE = 250;
+
+    /**
+     * Per-candidate analysis time cap in ASYNC FULL-EVIDENCE mode (ms).
+     * Background jobs have no 60-second HTTP deadline, so the 15s sync cap is
+     * replaced by a safe deep-analysis cap. Configurable via
+     * FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS.
+     */
+    static final long FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS = 120_000;
+
     /** Maximum directory depth when browsing the repo tree for source files. */
-    private static final int SOURCE_TREE_DEPTH = 3;
+    private static final int SOURCE_TREE_DEPTH = 3; // max descent levels for package exploration
 
     /**
      * Maximum root-level module directories probed per repository for nested
@@ -286,6 +321,12 @@ public class JobMatcherService {
     private final String githubServiceBaseUrl;
     private final String githubApiKey;
 
+    /** Instance (environment-configurable) FULL-EVIDENCE deep budgets. */
+    private final int fullEvidenceRequestBudget;
+    private final long fullEvidenceAnalysisTimeMs;
+    private final int fullEvidenceSourceFileCap;
+    private final int minRepositoryCoverage;
+
     /**
      * Global deadline for an entire Job Match request. Covers all candidates,
      * evidence collection, scoring, and the optional AI step. Must be less than
@@ -323,10 +364,43 @@ public class JobMatcherService {
         long evidenceStartNanos;
         /** Remaining evidence requests for current candidate (mutable, decremented). */
         int evidenceRequestBudget;
+        /**
+         * Deep (async) mode: uses the FULL-EVIDENCE budgets instead of the
+         * sync budgets. Deep mode also enforces the minimum repository
+         * coverage rule. Budgets are instance-configurable
+         * (environment overridable) so background jobs can run deeper than the
+         * synchronous endpoint without any code change.
+         */
+        final boolean deep;
+        /** Initial per-candidate request budget (mode dependent). */
+        final int budgetCap;
+        /** Per-repository source-file cap for this run. */
+        final int sourceCap;
+        /** Per-candidate evidence time cap (ms) for this run. */
+        final long perCandidateTimeCapMs;
+        /** Minimum repositories that must receive full evidence analysis. */
+        final int minRepositoryCoverage;
 
         MatchContext(long deadlineNanos, int evidenceRequestBudget) {
+            this(deadlineNanos, evidenceRequestBudget, false);
+        }
+
+        MatchContext(long deadlineNanos, int evidenceRequestBudget, boolean deep) {
+            this(deadlineNanos, evidenceRequestBudget, deep,
+                    deep ? FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO : MAX_SOURCE_FILES_PER_REPO,
+                    deep ? FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS : MAX_EVIDENCE_TIME_MS_PER_CANDIDATE,
+                    deep ? MIN_REPOSITORY_COVERAGE : Integer.MAX_VALUE);
+        }
+
+        MatchContext(long deadlineNanos, int evidenceRequestBudget, boolean deep,
+                     int sourceFileCap, long perCandidateTimeCapMs, int minRepositoryCoverage) {
             this.deadlineNanos = deadlineNanos;
             this.evidenceRequestBudget = evidenceRequestBudget;
+            this.budgetCap = evidenceRequestBudget;
+            this.deep = deep;
+            this.sourceCap = sourceFileCap;
+            this.perCandidateTimeCapMs = perCandidateTimeCapMs;
+            this.minRepositoryCoverage = minRepositoryCoverage;
         }
 
         /** Check if global deadline has been reached. */
@@ -342,8 +416,10 @@ public class JobMatcherService {
         /**
          * Check if evidence budget is exhausted. Three independent guards:
          * 1. Global match deadline (highest priority — covers ALL candidates)
-         * 2. Per-candidate evidence time limit (capped to remaining global time)
-         * 3. Per-candidate request count
+         * 2. Per-candidate evidence time limit (capped to remaining global time;
+         *    deep/async mode uses the 120s full-evidence cap)
+         * 3. Per-candidate request count (deep/async mode uses the 250-request
+         *    full-evidence budget)
          *
          * If ANY guard triggers, optional evidence collection stops.
          */
@@ -351,11 +427,16 @@ public class JobMatcherService {
             long now = System.nanoTime();
             long remainingGlobalNanos = deadlineNanos - now;
             long perCandidateMaxNanos = TimeUnit.MILLISECONDS.toNanos(
-                    Math.min(MAX_EVIDENCE_TIME_MS_PER_CANDIDATE,
+                    Math.min(perCandidateTimeCapMs,
                             TimeUnit.NANOSECONDS.toMillis(remainingGlobalNanos)));
             return now >= deadlineNanos
                     || (now - evidenceStartNanos) > perCandidateMaxNanos
                     || evidenceRequestBudget <= 0;
+        }
+
+        /** Per-repository source-file cap for the current mode. */
+        int sourceFileCap() {
+            return sourceCap;
         }
     }
 
@@ -368,12 +449,44 @@ public class JobMatcherService {
             @Value("${app.internal-api-key:}") String internalApiKey,
             @Value("${app.job-matching.max-evidence-repos:${JOB_MATCHING_MAX_EVIDENCE_REPOS:15}}") int maxEvidenceRepos,
             ObjectMapper objectMapper) {
+        this(githubServiceUrl, internalApiKey, maxEvidenceRepos,
+                FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE,
+                FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS,
+                FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO,
+                MIN_REPOSITORY_COVERAGE,
+                objectMapper);
+    }
+
+    /**
+     * Full constructor with environment-configurable FULL-EVIDENCE budgets:
+     * {@code FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE},
+     * {@code FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS},
+     * {@code FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO},
+     * {@code MIN_REPOSITORY_COVERAGE}. Kept public so tests and ops tooling can
+     * run deeper/looser background analysis without touching sync defaults.
+     */
+    public JobMatcherService(
+            String githubServiceUrl,
+            String internalApiKey,
+            int maxEvidenceRepos,
+            int fullEvidenceRequestBudget,
+            long fullEvidenceAnalysisTimeMs,
+            int fullEvidenceSourceFileCap,
+            int minRepositoryCoverage,
+            ObjectMapper objectMapper) {
         this.githubServiceBaseUrl = githubServiceUrl;
         this.githubApiKey = internalApiKey;
         this.githubClient = buildClient(githubServiceUrl, internalApiKey);
         this.rawGithubClient = buildRawGithubClient();
         this.objectMapper = objectMapper;
         this.maxEvidenceRepos = Math.min(maxEvidenceRepos, HARD_MAX_EVIDENCE_REPOS);
+        this.fullEvidenceRequestBudget = Math.max(fullEvidenceRequestBudget,
+                FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE);
+        this.fullEvidenceAnalysisTimeMs = Math.max(fullEvidenceAnalysisTimeMs,
+                FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS);
+        this.fullEvidenceSourceFileCap = Math.max(fullEvidenceSourceFileCap,
+                MAX_SOURCE_FILES_PER_REPO);
+        this.minRepositoryCoverage = Math.max(minRepositoryCoverage, 1);
     }
 
     /** Package-private constructor for tests. */
@@ -384,6 +497,10 @@ public class JobMatcherService {
         this.maxEvidenceRepos = HARD_MAX_EVIDENCE_REPOS;
         this.githubServiceBaseUrl = "http://localhost:8081";
         this.githubApiKey = "";
+        this.fullEvidenceRequestBudget = FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE;
+        this.fullEvidenceAnalysisTimeMs = FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS;
+        this.fullEvidenceSourceFileCap = FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO;
+        this.minRepositoryCoverage = MIN_REPOSITORY_COVERAGE;
     }
 
     // ────────────────────────── Public API ──────────────────────────
@@ -413,16 +530,26 @@ public class JobMatcherService {
 
     /**
      * Asynchronous match mode: processes ALL candidates without a global HTTP
-     * deadline. Per-candidate evidence budgets and request counts still apply.
-     * Used by the async job-match worker — the 50s Gateway timeout is irrelevant
-     * because this runs on a background thread.
+     * deadline. Used by the async job-match worker — the 50s Gateway timeout is
+     * irrelevant because this runs on a background thread.
+     *
+     * <p>Async mode is the PRIMARY deep path: it runs in FULL-EVIDENCE mode
+     * with the deep budgets ({@link #FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE}
+     * requests, {@link #FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS} ms,
+     * {@link #FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO} source files per repo)
+     * and enforces the minimum repository coverage rule
+     * ({@link #MIN_REPOSITORY_COVERAGE} repos per candidate).
      */
     public JobMatchResponse matchAsync(String jdText, List<String> usernames, String source, boolean includeAi) {
         // Use Long.MAX_VALUE as deadline — effectively no global time limit.
         // Per-candidate evidence time and request budget still apply.
         MatchContext ctx = new MatchContext(
                 Long.MAX_VALUE,
-                REQUEST_BUDGET_PER_CANDIDATE);
+                fullEvidenceRequestBudget,
+                true,
+                fullEvidenceSourceFileCap,
+                fullEvidenceAnalysisTimeMs,
+                minRepositoryCoverage);
         return matchInternal(jdText, usernames, source, includeAi, ctx);
     }
 
@@ -496,16 +623,77 @@ public class JobMatcherService {
         for (JobMatchCandidate c : results) {
             AiExplanationView v = byUsername.get(c.username());
             if (v == null) continue;
+            List<String> matched = c.matchedSkills() == null ? List.of() : c.matchedSkills();
+            String explanation = nz(v.explanation(), "");
+            // AI_CONTRADICTION GUARD: Gemini only explains deterministic results
+            // and may never contradict them. If the AI claims a skill is missing
+            // that the deterministic matchedSkills contains, the contradictory
+            // text is dropped and the deterministic explanation is used instead.
+            if (hasMissingClaim(explanation, matched)) {
+                explanation = deterministicExplanation(matched, c.missingSkills());
+            }
+            List<String> gaps = v.gaps() == null ? List.of() : v.gaps();
+            gaps = gaps.stream()
+                    .filter(g -> !hasMissingClaim(g, matched))
+                    .collect(Collectors.toList());
             out.add(new AiExplanation(
                     c.username(),
                     v.aiRank() != null ? v.aiRank() : 0,
                     nz(v.fitLabel(), "Partial fit"),
-                    nz(v.explanation(), ""),
+                    explanation,
                     v.strengths() == null ? List.of() : v.strengths(),
-                    v.gaps() == null ? List.of() : v.gaps(),
+                    gaps,
                     nz(v.recommendation(), "")));
         }
         return out;
+    }
+
+    /**
+     * Whether text contains an absence claim (missing/lacks/no experience...) for
+     * any of the given skills that the deterministic matcher actually matched.
+     * Matched skills are authoritative — an AI claim to the contrary is a
+     * CONTRADICTION and is never surfaced to the user.
+     */
+    static boolean hasMissingClaim(String text, List<String> matchedSkills) {
+        if (text == null || text.isBlank() || matchedSkills == null || matchedSkills.isEmpty()) {
+            return false;
+        }
+        String lower = text.toLowerCase(Locale.ROOT);
+        for (String skill : matchedSkills) {
+            List<String> aliases = SKILL_ALIASES.get(skill);
+            if (aliases == null) continue;
+            for (String alias : aliases) {
+                String a = alias.toLowerCase(Locale.ROOT);
+                if (!Pattern.compile("(?<![a-z0-9])" + Pattern.quote(a) + "(?![a-z0-9])")
+                        .matcher(lower).find()) {
+                    continue;
+                }
+                // Absence claim patterns around the matched skill name.
+                boolean absenceBefore = Pattern.compile(
+                                "(?:no |missing |lacks |lack of |without |not familiar with |"
+                                        + "does not have |doesn't have |never used |unfamiliar with |hasn't used |"
+                                        + "no experience with |no exposure to |not used |not present)"
+                                        + ".{0,60}" + Pattern.quote(a))
+                        .matcher(lower).find();
+                boolean absenceAfter = Pattern.compile(
+                                Pattern.quote(a)
+                                        + ".{0,60}(?:missing|absent|no experience|not present|not used|nowhere)")
+                        .matcher(lower).find();
+                if (absenceBefore || absenceAfter) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Deterministic fallback text when the AI contradicts deterministic matching. */
+    static String deterministicExplanation(List<String> matched, List<String> missing) {
+        String matchedPart = matched.isEmpty() ? "no repository evidence" : String.join(", ", matched);
+        String missingPart = missing == null || missing.isEmpty()
+                ? "none" : String.join(", ", missing);
+        return "Skills verified from deterministic repository evidence: " + matchedPart
+                + ". Unverified skills: " + missingPart + ".";
     }
 
     /**
@@ -624,7 +812,7 @@ public class JobMatcherService {
 
     private JobMatchCandidate analyzeCandidate(String username, List<String> required, MatchContext ctx) {
         long start = System.currentTimeMillis();
-        ctx.evidenceRequestBudget = REQUEST_BUDGET_PER_CANDIDATE;
+        ctx.evidenceRequestBudget = ctx.budgetCap;
         ctx.evidenceStartNanos = System.nanoTime();
 
         // Each API call uses a dynamic timeout based on remaining global time.
@@ -651,7 +839,8 @@ public class JobMatcherService {
                 username, languages.size(), repos.size());
 
         EvidenceStats stats = new EvidenceStats();
-        String corpus = buildCandidateCorpus(username, profile, languages, repos, required, stats, ctx);
+        EvidenceTracker tracker = new EvidenceTracker();
+        String corpus = buildCandidateCorpus(username, profile, languages, repos, required, stats, ctx, tracker);
 
         // ── Platform-level Git evidence: a GitHub-hosted repository IS evidence of Git ──
         if (!repos.isEmpty()) {
@@ -684,7 +873,8 @@ public class JobMatcherService {
                 profile != null ? profile.avatarUrl() : null,
                 profile != null ? profile.bio() : null,
                 developerScore, level, computeMatchScore(skillMatchPercent, developerScore),
-                skillMatchPercent, matched, missing, topLanguages, topRepos);
+                skillMatchPercent, matched, missing, topLanguages, topRepos,
+                tracker.views());
     }
 
     /**
@@ -756,9 +946,10 @@ public class JobMatcherService {
             List<RepoView> repos,
             List<String> required,
             EvidenceStats stats,
-            MatchContext ctx) {
+            MatchContext ctx,
+            EvidenceTracker tracker) {
 
-        StringBuilder sb = new StringBuilder(16_000);
+        StringBuilder sb = new StringBuilder(32_000);
 
         if (profile != null && profile.bio() != null) {
             sb.append(profile.bio()).append(' ');
@@ -775,19 +966,59 @@ public class JobMatcherService {
                 : required.stream().filter(Objects::nonNull)
                 .map(s -> s.toLowerCase(Locale.ROOT)).collect(Collectors.toSet());
 
-        List<RepoView> selected = selectEvidenceRepos(repos, required, normalizedRequired);
+        List<RepoView> selected = new ArrayList<>(selectEvidenceRepos(repos, required, normalizedRequired));
         stats.reposAttempted = selected.size();
 
         log.debug("JobMatch candidate={} reposReturned={} metadataPool={} evidenceRepos={}",
                 username, repos.size(), repos.size(), selected.size());
 
-        for (RepoView r : selected) {
+        // Track which required skills are already confirmed by evidence seen so
+        // far. This NEVER stops analysis (minimum coverage is enforced first);
+        // it only guides which remaining repositories are inspected next.
+        Set<String> confirmedSkills = new HashSet<>();
+
+        int coverage = Math.min(ctx.minRepositoryCoverage, selected.size());
+
+        for (int i = 0; i < selected.size(); i++) {
+            if (ctx.evidenceBudgetExhausted()) {
+                log.info("JobMatch candidate={} evidence budget exhausted at repo {}/{}",
+                        username, i, selected.size());
+                break;
+            }
+
+            // After the minimum coverage is complete, if required skills remain
+            // unresolved, rank the remaining repositories specifically for those
+            // unresolved skills (repos 11-15 targeted search).
+            if (i == coverage && !confirmedSkills.containsAll(required)
+                    && i < selected.size()) {
+                List<String> unresolved = unresolvedSkills(required, confirmedSkills); // re-rank driver
+                List<RepoView> remaining = selected.subList(i, selected.size());
+                remaining.sort(Comparator
+                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, unresolved))
+                        .thenComparingInt(RepoView::stars)
+                        .reversed());
+                log.debug("JobMatch candidate={} unresolvedSkills={} re-ranked repos {}+ for targeted search",
+                        username, unresolved, i + 1);
+            }
+
+            RepoView r = selected.get(i);
             sb.append(r.name()).append(' ');
             if (r.description() != null) sb.append(r.description()).append(' ');
             if (r.language() != null) sb.append(r.language()).append(' ');
             if (r.topics() != null) sb.append(String.join(" ", r.topics())).append(' ');
 
-            EvidenceResult er = fetchRepositoryEvidence(username, r.name(), r.defaultBranch(), required, stats, ctx);
+            // Repository metadata is LOW-confidence evidence (name/description/topics).
+            if (required != null) {
+                String repoMeta = (r.description() == null ? "" : r.description())
+                        + ' ' + (r.language() == null ? "" : r.language())
+                        + ' ' + (r.topics() == null ? "" : String.join(" ", r.topics()));
+                recordChunkEvidence(repoMeta, r.name(), "-", "-", "-",
+                        "METADATA", EvidenceTracker.LOW, required, confirmedSkills, tracker);
+            }
+
+            EvidenceResult er = fetchRepositoryEvidence(
+                    username, r.name(), r.defaultBranch(), required, stats, ctx, confirmedSkills, tracker);
+            stats.reposFullyAnalyzed++;
             if (!er.content.isBlank()) {
                 sb.append(' ').append(er.content).append(' ');
                 stats.reposWithEvidence++;
@@ -796,7 +1027,77 @@ public class JobMatcherService {
             stats.filesMissing += er.filesMissing;
         }
 
+        log.info("JobMatch candidate={} reposReturned={} reposSelected={} reposFullyAnalyzed={} " +
+                        "documentsInspected={} buildFilesInspected={} configFilesInspected={} " +
+                        "modulesDiscovered={} sourceRootsDiscovered={} sourceFilesFetched={} skillsConfirmed={}",
+                username, repos.size(), selected.size(), stats.reposFullyAnalyzed,
+                stats.documentsInspected, stats.buildFilesInspected, stats.configFilesInspected,
+                stats.modulesDiscovered, stats.sourceRootsDiscovered, stats.sourceFilesFound,
+                new ArrayList<>(confirmedSkills));
+
         return sb.toString().toLowerCase(Locale.ROOT);
+    }
+
+    /** Required skills not yet confirmed by candidate evidence. */
+    private static List<String> unresolvedSkills(List<String> required, Set<String> confirmedSkills) {
+        if (required == null || required.isEmpty()) return List.of();
+        return required.stream().filter(s -> !confirmedSkills.contains(s)).collect(Collectors.toList());
+    }
+
+    /**
+     * Record evidence for every required skill that this evidence chunk proves
+     * (chunk-level {@link #matches}). Recording is idempotent: the tracker keeps
+     * the highest-confidence record per skill, and {@code confirmedSkills} is
+     * only ever additive.
+     */
+    private static void recordChunkEvidence(
+            String chunk,
+            String repository,
+            String module,
+            String file,
+            String branch,
+            String evidenceType,
+            int confidenceRank,
+            List<String> required,
+            Set<String> confirmedSkills,
+            EvidenceTracker tracker) {
+        if (chunk == null || chunk.isBlank() || required == null) return;
+        String lower = chunk.toLowerCase(Locale.ROOT);
+        for (String skill : required) {
+            if (matchesStatic(lower, skill)) {
+                confirmedSkills.add(skill);
+                tracker.record(skill, confidenceRank, repository, module, file, branch, evidenceType);
+            }
+        }
+    }
+
+    /**
+     * Record evidence found inside a nested module build/config file, with the
+     * module path kept in the evidence record, and classify the file for the
+     * diagnostic counters (build vs configuration).
+     */
+    private static void recordModuleEvidence(
+            String content, String repo, String module, String file, String branch,
+            List<String> required, EvidenceStats stats,
+            Set<String> confirmedSkills, EvidenceTracker tracker) {
+        if (content == null || content.isBlank()) return;
+        String lower = file == null ? "" : file.toLowerCase(Locale.ROOT);
+        if (lower.startsWith("application.") || lower.startsWith("application-") || lower.equals("bootstrap.yml")) {
+            stats.configFilesInspected++;
+            recordChunkEvidence(content, repo, module, file, branch,
+                    "CONFIGURATION", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+        } else {
+            stats.buildFilesInspected++;
+            recordChunkEvidence(content, repo, module, file, branch,
+                    "BUILD", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+        }
+    }
+
+    /** Static {@link #matches} variant usable from static helpers. */
+    static boolean matchesStatic(String lowerCorpus, String canonicalSkill) {
+        if (lowerCorpus == null || lowerCorpus.isBlank()) return false;
+        Pattern p = SKILL_PATTERNS.get(canonicalSkill);
+        return p != null && p.matcher(lowerCorpus).find();
     }
 
     /**
@@ -944,16 +1245,62 @@ public class JobMatcherService {
      *   <li>Configuration files only if still needed</li>
      * </ul>
      */
-    static List<String> evidenceFilesFor(List<String> required) {
-        List<String> files = new ArrayList<>();
-        files.add("README.md");
+    /** Documentation files inspected for every repository (MEDIUM confidence). */
+    static final List<String> DOCUMENTATION_FILES = List.of(
+            "README.md", "README", "ARCHITECTURE.md", "DESIGN.md", "API.md");
 
+    /** Java build/dependency files (HIGH confidence build evidence). */
+    static final List<String> JAVA_BUILD_FILES = List.of(
+            "pom.xml", "build.gradle", "build.gradle.kts",
+            "settings.gradle", "gradle.properties");
+
+    /** Spring configuration files (HIGH confidence configuration evidence). */
+    static final List<String> SPRING_CONFIG_FILES = List.of(
+            "application.yml", "application.yaml", "application.properties", "bootstrap.yml");
+
+    /** Container/deployment files (HIGH confidence build/deploy evidence). */
+    static final List<String> DEPLOYMENT_FILES = List.of(
+            "Dockerfile", "docker-compose.yml", "docker-compose.yaml", "docker-compose.prod.yml");
+
+    /** CI/CD files (MEDIUM confidence when present at root). */
+    static final List<String> CI_FILES = List.of("Jenkinsfile", ".gitlab-ci.yml");
+
+    /**
+     * Bounded directory probes for evidence categories that live in
+     * subdirectories (CI workflows, docs, Kubernetes/deploy manifests).
+     * Each probe is a single Contents API call plus at most
+     * {@link #MAX_PROBED_FILES_PER_DIR} file fetches.
+     */
+    static final List<String> EVIDENCE_PROBE_DIRS = List.of(
+            ".github/workflows", "docs", "k8s", "deploy", "manifests");
+
+    /** Maximum files fetched per probed evidence directory. */
+    static final int MAX_PROBED_FILES_PER_DIR = 2;
+
+    /**
+     * High-signal files to inspect for technology detection, returned in
+     * progressive priority order. Covers ALL relevant evidence categories:
+     * documentation, build/dependency files, configuration files, Docker/
+     * deployment files, and CI/CD files. Fetching is budget-aware — the
+     * per-candidate request/time budget (not skill confirmation) bounds how
+     * far down this list analysis proceeds.
+     */
+    static List<String> evidenceFilesFor(List<String> required) {
         Set<String> normalized = required == null
                 ? Set.of()
                 : required.stream()
                 .filter(Objects::nonNull)
                 .map(s -> s.toLowerCase(Locale.ROOT))
                 .collect(Collectors.toSet());
+
+        // With no required skills there is nothing to search for — keep the
+        // historical README-only behavior (nothing else is ever consulted).
+        if (normalized.isEmpty()) {
+            return List.of("README.md");
+        }
+
+        List<String> files = new ArrayList<>();
+        files.addAll(DOCUMENTATION_FILES);
 
         boolean javaEcosystem = normalized.stream().anyMatch(s ->
                 s.contains("java") ||
@@ -972,31 +1319,44 @@ public class JobMatcherService {
                         s.contains("nodejs") ||
                         s.contains("express"));
 
+        boolean pythonEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("python") || s.contains("django") || s.contains("flask") ||
+                        s.contains("fastapi") || s.contains("machine learning") ||
+                        s.contains("data science") || s.contains("pandas") ||
+                        s.contains("tensorflow") || s.contains("pytorch"));
+
         boolean dockerEcosystem = normalized.stream().anyMatch(s ->
                 s.contains("docker") ||
                         s.contains("kubernetes") ||
                         s.contains("ci/cd"));
 
+        boolean ciEcosystem = normalized.stream().anyMatch(s ->
+                s.contains("ci/cd") || s.contains("jenkins") ||
+                        s.contains("github actions") || s.contains("gitlab") ||
+                        s.contains("deployment") || s.contains("devops"));
+
         if (javaEcosystem) {
-            // Primary build file first, then fallbacks
-            files.add("pom.xml");
-            files.add("build.gradle");
-            files.add("build.gradle.kts");
-            // Configuration files (fetched only if still needed)
-            files.add("application.yml");
-            files.add("application.yaml");
-            files.add("application.properties");
+            // Build/dependency files first, then configuration files
+            files.addAll(JAVA_BUILD_FILES);
+            files.addAll(SPRING_CONFIG_FILES);
         }
 
         if (javascriptEcosystem) {
             files.add("package.json");
         }
 
+        if (pythonEcosystem) {
+            files.add("requirements.txt");
+            files.add("pyproject.toml");
+            files.add("setup.py");
+        }
+
         if (dockerEcosystem) {
-            // Primary Docker file first, then fallbacks
-            files.add("Dockerfile");
-            files.add("docker-compose.yml");
-            files.add("docker-compose.yaml");
+            files.addAll(DEPLOYMENT_FILES);
+        }
+
+        if (ciEcosystem) {
+            files.addAll(CI_FILES);
         }
 
         return List.copyOf(files);
@@ -1007,12 +1367,59 @@ public class JobMatcherService {
     private static class EvidenceStats {
         int reposAttempted;
         int reposWithEvidence;
+        int reposFullyAnalyzed;
         int filesFound;
         int filesMissing;
+        int documentsInspected;
+        int buildFilesInspected;
+        int configFilesInspected;
+        int modulesDiscovered;
+        int sourceRootsDiscovered;
         int sourceFilesDiscovered;
         int sourceFilesFound;
         int sourceFilesMissing;
         List<String> sourceEvidenceSkills = new ArrayList<>();
+    }
+
+    /**
+     * Per-candidate, per-skill evidence records. Each skill keeps the
+     * highest-confidence evidence that proved it (HIGH = source/build/config,
+     * MEDIUM = documentation, LOW = metadata). Candidate state is fully
+     * isolated: a fresh tracker is created per candidate and never shared.
+     */
+    static final class EvidenceTracker {
+        static final int HIGH = 3;
+        static final int MEDIUM = 2;
+        static final int LOW = 1;
+
+        private static final String[] CONFIDENCE_NAMES = {"LOW", "MEDIUM", "HIGH"};
+
+        private final Map<String, JobMatchResponse.SkillEvidenceView> bySkill = new LinkedHashMap<>();
+        private final Map<String, Integer> bySkillRank = new java.util.HashMap<>();
+
+        void record(String skill, int confidenceRank, String repository, String module,
+                    String file, String branch, String evidenceType) {
+            if (skill == null) return;
+            Integer existing = bySkillRank.get(skill);
+            if (existing != null && existing >= confidenceRank) {
+                return; // keep the highest-confidence evidence already recorded
+            }
+            bySkill.put(skill, new JobMatchResponse.SkillEvidenceView(
+                    skill,
+                    CONFIDENCE_NAMES[Math.max(0, Math.min(2, confidenceRank - 1))],
+                    repository == null ? "-" : repository,
+                    module == null ? "-" : module,
+                    file == null ? "-" : file,
+                    branch == null ? "-" : branch,
+                    evidenceType == null ? "METADATA" : evidenceType,
+                    "-"));
+            bySkillRank.put(skill, confidenceRank);
+        }
+
+        /** Snapshot of recorded evidence in skill order. */
+        List<JobMatchResponse.SkillEvidenceView> views() {
+            return List.copyOf(bySkill.values());
+        }
     }
 
     private record SourceEvidenceResult(String content, int filesFetched, int filesFailed, List<String> skillsDetected) {}
@@ -1028,8 +1435,10 @@ public class JobMatcherService {
     /**
      * Budget-aware file fetch. Decrements the per-candidate request budget and
      * returns null if the budget (count or time) is exhausted.
+     * Package-private so tests can override it with a canned file provider and
+     * exercise the REAL discovery → selection → fetch → detection pipeline.
      */
-    private FileResult budgetedFetch(String owner, String repo, String branch, String file, MatchContext ctx) {
+    FileResult budgetedFetch(String owner, String repo, String branch, String file, MatchContext ctx) {
         if (ctx.evidenceBudgetExhausted()) return null;
         ctx.evidenceRequestBudget--;
         return fetchRawRepositoryFile(owner, repo, branch, file, ctx);
@@ -1043,7 +1452,7 @@ public class JobMatcherService {
      * survive URL encoding intact and the github-service endpoint can forward
      * them to the GitHub Contents API as a literal path.
      */
-    private List<Map<String, Object>> budgetedDirFetch(String owner, String repo, String branch, String path, MatchContext ctx) {
+    List<Map<String, Object>> budgetedDirFetch(String owner, String repo, String branch, String path, MatchContext ctx) {
         if (ctx.evidenceBudgetExhausted()) return null;
         ctx.evidenceRequestBudget--;
         try {
@@ -1064,24 +1473,24 @@ public class JobMatcherService {
     }
 
     /**
-     * Fetch evidence for a single repository with progressive fetching and
-     * per-candidate request budgeting.
+     * Fetch evidence for a single repository across ALL relevant evidence
+     * categories: documentation, build/dependency files, configuration files,
+     * Docker/deployment files, CI/CD files, bounded subdirectory probes
+     * (.github/workflows, docs, k8s, deploy, manifests), nested monorepo
+     * modules, and high-signal source files.
+     *
+     * <p>FULL-EVIDENCE RULE: evidence collection NEVER stops just because every
+     * currently visible skill is confirmed. The only stops are the per-candidate
+     * request/time budgets and the per-repository evidence size cap. A skill
+     * found in repo 1 must not prevent repos 2-15 from being inspected.
      *
      * <p>Cache design: NO repo-level aggregate cache. Each evidence file is cached
      * independently at the file level (owner/repo/branch/file).
-     *
-     * <p>Evidence pipeline per branch (progressive, budget-aware):
-     * <ol>
-     *   <li>README (always fetched — broad evidence)</li>
-     *   <li>Primary build file (pom.xml / package.json / Dockerfile)</li>
-     *   <li>Fallback build files ONLY if primary missing AND skills still uncovered</li>
-     *   <li>Config files ONLY if skills still uncovered</li>
-     *   <li>Source discovery ONLY if all build/config evidence insufficient</li>
-     * </ol>
      */
     private EvidenceResult fetchRepositoryEvidence(String owner, String repo, String defaultBranch,
                                                    List<String> required, EvidenceStats stats,
-                                                   MatchContext ctx) {
+                                                   MatchContext ctx, Set<String> confirmedSkills,
+                                                   EvidenceTracker tracker) {
         if (owner == null || owner.isBlank() || repo == null || repo.isBlank()) {
             return new EvidenceResult("", "", 0, 0);
         }
@@ -1093,30 +1502,19 @@ public class JobMatcherService {
         int totalMissing = 0;
         List<String> branchesChecked = new ArrayList<>();
 
-        // Track confirmed skills ACROSS all branch attempts.
-        // Once a skill is confirmed from any branch's evidence, it stays confirmed.
-        // Stopping is based ONLY on ALL required skills being confirmed.
-        Set<String> confirmedSkills = new HashSet<>();
-
         for (String branch : branches) {
             if (ctx.evidenceBudgetExhausted()) break;
-
-            // Skip branch only if ALL required skills are already confirmed
-            boolean allSkillsConfirmed = !required.isEmpty()
-                    && required.stream().allMatch(confirmedSkills::contains);
-            if (allSkillsConfirmed) break;
 
             branchesChecked.add(branch);
             StringBuilder branchEvidence = new StringBuilder();
             int found = 0;
             int missing = 0;
-            StringBuilder corpusBuilder = new StringBuilder();
             int skillsBefore = confirmedSkills.size();
 
-            // Progressive evidence fetching: fetch files in priority order,
-            // check skills after each file, stop when all skills are confirmed.
+            // ── 1) Documentation + build + config + docker + CI files (full categories) ──
+            // No early stopping on confirmed skills: every evidence category is
+            // inspected while the budget allows.
             List<String> evidenceFiles = evidenceFilesFor(required);
-
             for (String file : evidenceFiles) {
                 if (ctx.evidenceBudgetExhausted()) break;
 
@@ -1129,44 +1527,34 @@ public class JobMatcherService {
                             .append("]\n")
                             .append(fr.content)
                             .append('\n');
-                    corpusBuilder.append(fr.content).append(' ');
                     found++;
-
-                    // Skill-based early stopping: check which skills are confirmed
-                    if (!required.isEmpty()) {
-                        String corpus = corpusBuilder.toString().toLowerCase(Locale.ROOT);
-                        for (String skill : required) {
-                            if (!confirmedSkills.contains(skill) && matches(corpus, skill)) {
-                                confirmedSkills.add(skill);
-                            }
-                        }
-                    }
+                    recordEvidenceFile(file, fr.content, owner, repo, branch,
+                            required, stats, confirmedSkills, tracker);
                 } else {
                     missing++;
                 }
-
-                // If all skills confirmed, skip remaining build/config files for this branch
-                allSkillsConfirmed = !required.isEmpty()
-                        && required.stream().allMatch(confirmedSkills::contains);
-                if (allSkillsConfirmed) break;
             }
 
-            // Nested module discovery (monorepos): ONLY when skills are still
-            // unconfirmed. Probes bounded module dirs for build/config files and
-            // nested source roots, accumulating evidence into this repo's corpus.
-            if (!allSkillsConfirmed && !required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
-                NestedModuleResult nmr = fetchNestedModuleEvidence(owner, repo, branch, required, stats, ctx, confirmedSkills);
+            // ── 2) Bounded subdirectory probes (CI workflows, docs, k8s/deploy) ──
+            if (!ctx.evidenceBudgetExhausted()) {
+                probeEvidenceDirectories(owner, repo, branch, required, stats, ctx,
+                        branchEvidence, confirmedSkills, tracker);
+            }
+
+            // ── 3) Nested module discovery (monorepos) ──
+            if (!required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
+                NestedModuleResult nmr = fetchNestedModuleEvidence(
+                        owner, repo, branch, required, stats, ctx, confirmedSkills, tracker);
                 if (!nmr.content.isBlank()) {
                     branchEvidence.append("\n[nested-modules]\n").append(nmr.content).append('\n');
                     found += nmr.buildFilesFound() + nmr.sourceFilesFetched();
                 }
-                allSkillsConfirmed = !required.isEmpty()
-                        && required.stream().allMatch(confirmedSkills::contains);
             }
 
-            // Root source discovery: ONLY when skills are still unconfirmed
-            if (!allSkillsConfirmed && !required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
-                SourceEvidenceResult ser = fetchSourceEvidence(owner, repo, branch, required, stats, ctx);
+            // ── 4) Root source discovery ──
+            if (!required.isEmpty() && !ctx.evidenceBudgetExhausted()) {
+                SourceEvidenceResult ser = fetchSourceEvidence(
+                        owner, repo, branch, required, stats, ctx, confirmedSkills, tracker);
                 if (!ser.content.isBlank()) {
                     branchEvidence.append("\n[source-evidence]\n")
                             .append(ser.content)
@@ -1187,9 +1575,8 @@ public class JobMatcherService {
             totalFound += found;
             totalMissing += missing;
 
-            int skillsAfter = confirmedSkills.size();
             log.debug("repo={}/{} branch={} skillsBefore={} skillsAfter={} found={} missing={}",
-                    owner, repo, branch, skillsBefore, skillsAfter, found, missing);
+                    owner, repo, branch, skillsBefore, confirmedSkills.size(), found, missing);
         }
 
         String bestEvidence = combinedEvidence.toString();
@@ -1200,6 +1587,88 @@ public class JobMatcherService {
         log.debug("repo={} defaultBranch={} branchesChecked={} branchUsed={} evidenceFilesFound={} evidenceFilesMissing={}",
                 owner + "/" + repo, defaultBranch, branchesChecked, branchUsed, totalFound, totalMissing);
         return new EvidenceResult(bestEvidence, branchUsed, totalFound, totalMissing);
+    }
+
+    /**
+     * Classify one fetched evidence file by category, count it in the
+     * diagnostic stats, and record HIGH/MEDIUM evidence for every required
+     * skill it proves.
+     */
+    private static void recordEvidenceFile(
+            String file, String content, String owner, String repo, String branch,
+            List<String> required, EvidenceStats stats,
+            Set<String> confirmedSkills, EvidenceTracker tracker) {
+        String lower = file.toLowerCase(Locale.ROOT);
+        if (DOCUMENTATION_FILES.contains(file) || lower.startsWith("docs/") || lower.contains("/docs/")) {
+            stats.documentsInspected++;
+            recordChunkEvidence(content, repo, "-", file, branch,
+                    "DOCUMENTATION", EvidenceTracker.MEDIUM, required, confirmedSkills, tracker);
+        } else if (lower.startsWith("application.") || lower.equals("bootstrap.yml")
+                || lower.startsWith("application-")) {
+            stats.configFilesInspected++;
+            recordChunkEvidence(content, repo, "-", file, branch,
+                    "CONFIGURATION", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+        } else {
+            // build files, dependency files, Docker/deployment files, CI files
+            stats.buildFilesInspected++;
+            recordChunkEvidence(content, repo, "-", file, branch,
+                    "BUILD", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+        }
+    }
+
+    /**
+     * Bounded directory probes for evidence that lives in subdirectories:
+     * {@code .github/workflows} (CI), {@code docs} (documentation),
+     * {@code k8s} / {@code deploy} / {@code manifests} (Kubernetes/deployment
+     * manifests). Each probe costs 1 Contents API call plus at most
+     * {@link #MAX_PROBED_FILES_PER_DIR} file fetches. This is deliberately
+     * bounded — no recursive crawl.
+     */
+    private void probeEvidenceDirectories(
+            String owner, String repo, String branch, List<String> required, EvidenceStats stats,
+            MatchContext ctx, StringBuilder branchEvidence,
+            Set<String> confirmedSkills, EvidenceTracker tracker) {
+        for (String dir : EVIDENCE_PROBE_DIRS) {
+            if (ctx.evidenceBudgetExhausted()) break;
+            List<Map<String, Object>> items = budgetedDirFetch(owner, repo, branch, dir, ctx);
+            if (items == null) continue;
+
+            List<String> files = new ArrayList<>();
+            for (Map<String, Object> item : items) {
+                if (item == null) continue;
+                if ("file".equals(item.get("type")) && item.get("name") instanceof String n) {
+                    if (!n.equalsIgnoreCase("README.md")) files.add(n);
+                }
+            }
+            if (files.isEmpty()) continue;
+
+            int fetched = 0;
+            for (String f : files) {
+                if (fetched >= MAX_PROBED_FILES_PER_DIR || ctx.evidenceBudgetExhausted()) break;
+                FileResult fr = budgetedFetch(owner, repo, branch, dir + "/" + f, ctx);
+                if (fr == null) break; // budget exhausted
+                if (!fr.content.isBlank()) {
+                    branchEvidence.append("\n[file ").append(dir).append("/").append(f).append("]\n")
+                            .append(fr.content).append('\n');
+                    fetched++;
+                    String lowerDir = dir.toLowerCase(Locale.ROOT);
+                    if (lowerDir.equals("docs")) {
+                        stats.documentsInspected++;
+                        recordChunkEvidence(fr.content, repo, dir, f, branch,
+                                "DOCUMENTATION", EvidenceTracker.MEDIUM, required, confirmedSkills, tracker);
+                    } else if (lowerDir.startsWith(".github")) {
+                        stats.buildFilesInspected++;
+                        recordChunkEvidence(fr.content, repo, dir, f, branch,
+                                "BUILD", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+                    } else {
+                        // k8s / deploy / manifests — deployment evidence
+                        stats.buildFilesInspected++;
+                        recordChunkEvidence(fr.content, repo, dir, f, branch,
+                                "BUILD", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1233,7 +1702,8 @@ public class JobMatcherService {
      */
     private SourceEvidenceResult fetchSourceEvidence(String owner, String repo, String branch,
                                                      List<String> required, EvidenceStats stats,
-                                                     MatchContext ctx) {
+                                                     MatchContext ctx, Set<String> confirmedSkills,
+                                                     EvidenceTracker tracker) {
         // Discover source file paths (bounded directory API calls)
         List<String> sourcePaths = discoverSourceFiles(owner, repo, branch, required, ctx);
         if (sourcePaths.isEmpty()) {
@@ -1244,15 +1714,14 @@ public class JobMatcherService {
         int fetched = 0;
         int failed = 0;
         List<String> skillsDetected = new ArrayList<>();
+        int cap = ctx.sourceFileCap();
 
         for (String path : sourcePaths) {
-            // Per-repository cap shared with nested-module source discovery
-            if (fetched >= MAX_SOURCE_FILES_PER_REPO || stats.sourceFilesFound >= MAX_SOURCE_FILES_PER_REPO) break;
-
-            // Early stopping: stop once all required skills are covered
-            if (required.stream().allMatch(s -> skillsDetected.contains(s))) {
-                break;
-            }
+            // Per-repository cap shared with nested-module source discovery.
+            // No skill-based early stopping: high-signal files keep being
+            // fetched up to the cap / budget so every required skill gets a
+            // targeted source search.
+            if (fetched >= cap || stats.sourceFilesFound >= cap) break;
 
             FileResult fr = budgetedFetch(owner, repo, branch, path, ctx);
             if (fr == null) break; // budget exhausted
@@ -1267,6 +1736,8 @@ public class JobMatcherService {
                             skillsDetected.add(skill);
                         }
                     }
+                    recordChunkEvidence(fr.content, repo, "-", path, branch,
+                            "SOURCE", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
                 }
             } else {
                 failed++;
@@ -1349,19 +1820,19 @@ public class JobMatcherService {
 
             // Explore each available source root (bounded by budget)
             for (String root : availableRoots) {
-                if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                if (paths.size() >= ctx.sourceFileCap()) break;
                 if (ctx.evidenceRequestBudget <= 0) break;
                 rootsChecked.add(root);
                 List<String> javaPaths = discoverJavaSourcePaths(
                         owner, repo, branch, root, required, ctx);
                 for (String p : javaPaths) {
-                    if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                    if (paths.size() >= ctx.sourceFileCap()) break;
                     if (seen.add(p)) paths.add(p);
                 }
             }
 
             // Multi-module: explore services/*/src/main/java if not yet at limit
-            if (hasMultiModuleServices && paths.size() < MAX_SOURCE_FILES_PER_REPO
+            if (hasMultiModuleServices && paths.size() < ctx.sourceFileCap()
                     && ctx.evidenceRequestBudget > 0) {
                 rootsChecked.add(MULTI_MODULE_SERVICES_ROOT + "/*");
                 discoverMultiModulePaths(owner, repo, branch, required, ctx, paths, seen);
@@ -1379,8 +1850,8 @@ public class JobMatcherService {
         if (paths.size() > 1) {
             paths.sort(Comparator.comparingInt(JobMatcherService::sourceFilePriority));
         }
-        if (paths.size() > MAX_SOURCE_FILES_PER_REPO) {
-            paths = paths.subList(0, MAX_SOURCE_FILES_PER_REPO);
+        if (paths.size() > ctx.sourceFileCap()) {
+            paths = paths.subList(0, ctx.sourceFileCap());
         }
         return paths;
     }
@@ -1397,7 +1868,7 @@ public class JobMatcherService {
             if (items == null) return;
 
             for (Map<String, Object> item : items) {
-                if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                if (paths.size() >= ctx.sourceFileCap()) break;
                 if (ctx.evidenceRequestBudget <= 0) break;
 
                 String name = (String) item.get("name");
@@ -1408,7 +1879,7 @@ public class JobMatcherService {
                 List<String> modulePaths = discoverJavaSourcePaths(
                         owner, repo, branch, moduleSrc, required, ctx);
                 for (String p : modulePaths) {
-                    if (paths.size() >= MAX_SOURCE_FILES_PER_REPO) break;
+                    if (paths.size() >= ctx.sourceFileCap()) break;
                     if (seen.add(p)) paths.add(p);
                 }
             }
@@ -1602,7 +2073,8 @@ public class JobMatcherService {
      */
     private NestedModuleResult fetchNestedModuleEvidence(String owner, String repo, String branch,
                                                          List<String> required, EvidenceStats stats,
-                                                         MatchContext ctx, Set<String> confirmedSkills) {
+                                                         MatchContext ctx, Set<String> confirmedSkills,
+                                                         EvidenceTracker tracker) {
         NestedModuleResult result = new NestedModuleResult();
         if (ctx.evidenceBudgetExhausted() || required.isEmpty()) return result;
 
@@ -1620,7 +2092,7 @@ public class JobMatcherService {
         int sourceFilesFetched = 0;
 
         for (String module : moduleDirs) {
-            if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+            if (ctx.evidenceBudgetExhausted()) break;
 
             List<Map<String, Object>> moduleItems = budgetedDirFetch(owner, repo, branch, module, ctx);
             if (moduleItems == null) continue;
@@ -1634,7 +2106,7 @@ public class JobMatcherService {
             // 1) Module build files (primary evidence: spring-boot-starter-web → Spring Boot,
             //    spring-cloud-starter-gateway + eureka → Microservices, Dockerfile → Docker)
             for (String f : nestedBuildFilesFor(names, required)) {
-                if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                if (ctx.evidenceBudgetExhausted()) break;
                 FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + f, ctx);
                 if (fr == null) break; // budget exhausted
                 if (!fr.content.isBlank()) {
@@ -1643,16 +2115,17 @@ public class JobMatcherService {
                     corpus.append(fr.content).append(' ');
                     buildFilesFound++;
                     stats.filesFound++;
-                    updateConfirmedSkills(corpus, required, confirmedSkills);
+                    recordModuleEvidence(fr.content, repo, module, f, branch,
+                            required, stats, confirmedSkills, tracker);
                 } else {
                     stats.filesMissing++;
                 }
             }
 
             // 2) Module config files while skills remain unconfirmed
-            if (!allSkillsConfirmed(required, confirmedSkills) && !ctx.evidenceBudgetExhausted()) {
+            if (!ctx.evidenceBudgetExhausted()) {
                 for (String f : nestedConfigFilesFor(names, required)) {
-                    if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                    if (ctx.evidenceBudgetExhausted()) break;
                     FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + f, ctx);
                     if (fr == null) break; // budget exhausted
                     if (!fr.content.isBlank()) {
@@ -1661,7 +2134,8 @@ public class JobMatcherService {
                         corpus.append(fr.content).append(' ');
                         buildFilesFound++;
                         stats.filesFound++;
-                        updateConfirmedSkills(corpus, required, confirmedSkills);
+                        recordModuleEvidence(fr.content, repo, module, f, branch,
+                            required, stats, confirmedSkills, tracker);
                     } else {
                         stats.filesMissing++;
                     }
@@ -1669,9 +2143,9 @@ public class JobMatcherService {
             }
 
             // 3) Depth-2 submodules (services/auth-service, backend/services/...)
-            if (!allSkillsConfirmed(required, confirmedSkills) && !ctx.evidenceBudgetExhausted()) {
+            if (!ctx.evidenceBudgetExhausted()) {
                 for (String sub : nestedSubmoduleDirs(moduleItems, MAX_NESTED_SUBMODULES)) {
-                    if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                    if (ctx.evidenceBudgetExhausted()) break;
                     List<Map<String, Object>> subItems = budgetedDirFetch(owner, repo, branch, module + "/" + sub, ctx);
                     if (subItems == null) continue;
 
@@ -1683,7 +2157,7 @@ public class JobMatcherService {
                     // Depth-2 build file: pom.xml / package.json only (bounded)
                     for (String f : List.of("pom.xml", "package.json")) {
                         if (!subNames.contains(f)) continue;
-                        if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+                        if (ctx.evidenceBudgetExhausted()) break;
                         FileResult fr = budgetedFetch(owner, repo, branch, module + "/" + sub + "/" + f, ctx);
                         if (fr == null) break; // budget exhausted
                         if (!fr.content.isBlank()) {
@@ -1692,32 +2166,37 @@ public class JobMatcherService {
                             corpus.append(fr.content).append(' ');
                             buildFilesFound++;
                             stats.filesFound++;
-                            updateConfirmedSkills(corpus, required, confirmedSkills);
+                            recordModuleEvidence(fr.content, repo, module, f, branch,
+                            required, stats, confirmedSkills, tracker);
                         } else {
                             stats.filesMissing++;
                         }
                     }
 
                     // Depth-2 nested source root
-                    if (subNames.contains("src") && !allSkillsConfirmed(required, confirmedSkills)
-                            && stats.sourceFilesFound < MAX_SOURCE_FILES_PER_REPO) {
+                    if (subNames.contains("src")
+                            && stats.sourceFilesFound < ctx.sourceFileCap()) {
                         sourceRootsDiscovered++;
                         sourceFilesFetched += fetchNestedSourceFiles(owner, repo, branch, required, stats, ctx,
-                                confirmedSkills, evidence, module + "/" + sub + "/src/main/java", MAX_SOURCE_FILES_PER_REPO);
+                                confirmedSkills, tracker, evidence,
+                                module + "/" + sub + "/src/main/java", ctx.sourceFileCap());
                     }
                 }
             }
 
             // 4) Nested source root (*/src/main/java) with per-repo file cap
-            if (names.contains("src") && !allSkillsConfirmed(required, confirmedSkills)
+            if (names.contains("src")
                     && !ctx.evidenceBudgetExhausted()
-                    && stats.sourceFilesFound < MAX_SOURCE_FILES_PER_REPO) {
+                    && stats.sourceFilesFound < ctx.sourceFileCap()) {
                 sourceRootsDiscovered++;
                 sourceFilesFetched += fetchNestedSourceFiles(owner, repo, branch, required, stats, ctx,
-                        confirmedSkills, evidence, module + "/src/main/java", MAX_SOURCE_FILES_PER_REPO);
+                        confirmedSkills, tracker, evidence,
+                        module + "/src/main/java", ctx.sourceFileCap());
             }
         }
 
+        stats.modulesDiscovered += moduleDirs.size();
+        stats.sourceRootsDiscovered += sourceRootsDiscovered;
         log.debug("repo={}/{} defaultBranch={} modulesDiscovered={} modulesProbed={} buildFilesDiscovered={} " +
                         "sourceRootsDiscovered={} sourceFilesFetched={} skillsAdded={}",
                 owner, repo, branch, moduleDirs.size(), modulesProbed, buildFilesFound,
@@ -1735,11 +2214,12 @@ public class JobMatcherService {
      */
     private int fetchNestedSourceFiles(String owner, String repo, String branch, List<String> required,
                                        EvidenceStats stats, MatchContext ctx, Set<String> confirmedSkills,
-                                       StringBuilder evidence, String sourceRoot, int cap) {
+                                       EvidenceTracker tracker, StringBuilder evidence,
+                                       String sourceRoot, int cap) {
         int fetched = 0;
         List<String> paths = discoverJavaSourcePaths(owner, repo, branch, sourceRoot, required, ctx);
         for (String p : paths) {
-            if (allSkillsConfirmed(required, confirmedSkills) || ctx.evidenceBudgetExhausted()) break;
+            if (ctx.evidenceBudgetExhausted()) break;
             if (stats.sourceFilesFound >= cap) break;
             FileResult fr = budgetedFetch(owner, repo, branch, p, ctx);
             if (fr == null) break; // budget exhausted
@@ -1749,11 +2229,8 @@ public class JobMatcherService {
                     evidence.append("\n[file ").append(p).append("]\n").append(ev).append('\n');
                     fetched++;
                     stats.sourceFilesFound++;
-                    for (String skill : required) {
-                        if (!confirmedSkills.contains(skill) && sourcePatternMatches(fr.content, p, skill)) {
-                            confirmedSkills.add(skill);
-                        }
-                    }
+                    recordChunkEvidence(fr.content, repo, "-", p, branch,
+                            "SOURCE", EvidenceTracker.HIGH, required, confirmedSkills, tracker);
                 }
             } else {
                 stats.sourceFilesMissing++;
@@ -1793,7 +2270,7 @@ public class JobMatcherService {
             // below the domain root (com/stschools/microservices/controller, ...).
             // Bounded: at most MAX_PACKAGE_ROOT_BRANCHES branches per level,
             // at most PACKAGE_ROOT_DESCENT_DEPTH levels, all budget-decremented.
-            if (dirsToExplore.isEmpty() && paths.size() < MAX_SOURCE_FILES_PER_REPO
+            if (dirsToExplore.isEmpty() && paths.size() < ctx.sourceFileCap()
                     && ctx.evidenceRequestBudget > 0) {
                 Queue<String> packageRoots = new java.util.LinkedList<>();
                 for (Map<String, Object> item : items) {
@@ -1809,7 +2286,7 @@ public class JobMatcherService {
                 int descent = 0;
                 while (!packageRoots.isEmpty() && descent < PACKAGE_ROOT_DESCENT_DEPTH
                         && dirsToExplore.isEmpty()
-                        && paths.size() < MAX_SOURCE_FILES_PER_REPO
+                        && paths.size() < ctx.sourceFileCap()
                         && ctx.evidenceRequestBudget > 0) {
                     String dir = packageRoots.poll();
                     List<Map<String, Object>> dirItems = budgetedDirFetch(owner, repo, branch, dir, ctx);
@@ -1820,7 +2297,7 @@ public class JobMatcherService {
                         String type = (String) di.get("type");
                         if (name == null || type == null) continue;
                         if ("file".equals(type) && SOURCE_FILE_NAMES.contains(name)
-                                && paths.size() < MAX_SOURCE_FILES_PER_REPO) {
+                                && paths.size() < ctx.sourceFileCap()) {
                             paths.add(dir + "/" + name);
                         }
                         if ("dir".equals(type)) {
@@ -1839,7 +2316,7 @@ public class JobMatcherService {
 
             int depth = 0;
             while (!dirsToExplore.isEmpty() && depth < SOURCE_TREE_DEPTH
-                    && paths.size() < MAX_SOURCE_FILES_PER_REPO && ctx.evidenceRequestBudget > 0) {
+                    && paths.size() < ctx.sourceFileCap() && ctx.evidenceRequestBudget > 0) {
                 String dir = dirsToExplore.poll();
                 try {
                     List<Map<String, Object>> dirItems = budgetedDirFetch(owner, repo, branch, dir, ctx);
@@ -1878,18 +2355,58 @@ public class JobMatcherService {
                 s.contains("microservice") || s.contains("service") || s.contains("business"));
         boolean needsConfig = normalizedRequired.stream().anyMatch(s ->
                 s.contains("spring") || s.contains("config") || s.contains("security") ||
-                s.contains("gateway") || s.contains("eureka"));
+                s.contains("gateway") || s.contains("eureka") || s.contains("redis") ||
+                s.contains("kafka"));
         boolean needsRepository = normalizedRequired.stream().anyMatch(s ->
                 s.contains("sql") || s.contains("database") || s.contains("jpa") ||
-                s.contains("hibernate") || s.contains("data"));
+                s.contains("hibernate") || s.contains("data") || s.contains("postgres") ||
+                s.contains("mysql") || s.contains("mongodb"));
         boolean needsGateway = normalizedRequired.stream().anyMatch(s ->
-                s.contains("gateway") || s.contains("microservice") || s.contains("routing"));
+                s.contains("gateway") || s.contains("microservice") || s.contains("routing") ||
+                s.contains("eureka") || s.contains("feign") || s.contains("discovery"));
+        boolean needsMessaging = normalizedRequired.stream().anyMatch(s ->
+                s.contains("kafka") || s.contains("rabbitmq") || s.contains("messaging") ||
+                s.contains("queue"));
+        boolean needsCloud = normalizedRequired.stream().anyMatch(s ->
+                s.contains("aws") || s.contains("azure") || s.contains("gcp") ||
+                s.contains("cloud") || s.contains("s3"));
 
+        // TARGETED SOURCE SEARCH: when a required skill is unresolved, the
+        // source discovery deliberately descends into the packages where that
+        // skill's evidence typically lives (Redis config, Kafka consumers,
+        // JPA repositories, Feign clients, cloud clients...).
         if (needsControllers) { relevant.add("controller"); relevant.add("controllers"); }
         if (needsServices) { relevant.add("service"); relevant.add("services"); }
-        if (needsConfig) { relevant.add("config"); relevant.add("configuration"); }
-        if (needsRepository) { relevant.add("repository"); relevant.add("repo"); }
-        if (needsGateway) { relevant.add("gateway"); relevant.add("filter"); }
+        if (needsConfig) {
+            relevant.add("config"); relevant.add("configuration");
+            if (normalizedRequired.stream().anyMatch(s -> s.contains("redis"))) {
+                relevant.add("redis"); relevant.add("cache");
+            }
+            if (normalizedRequired.stream().anyMatch(s -> s.contains("kafka"))) {
+                relevant.add("kafka");
+            }
+        }
+        if (needsRepository) {
+            relevant.add("repository"); relevant.add("repo");
+            if (normalizedRequired.stream().anyMatch(s ->
+                    s.contains("sql") || s.contains("database") || s.contains("jpa") ||
+                            s.contains("hibernate"))) {
+                relevant.add("dao"); relevant.add("jdbc"); relevant.add("entity");
+                relevant.add("model"); relevant.add("domain"); relevant.add("persistence");
+            }
+        }
+        if (needsGateway) {
+            relevant.add("gateway"); relevant.add("filter");
+            relevant.add("client"); relevant.add("discovery");
+        }
+        if (needsMessaging) {
+            relevant.add("consumer"); relevant.add("producer");
+            relevant.add("listener"); relevant.add("messaging");
+        }
+        if (needsCloud) {
+            relevant.add("client"); relevant.add("cloud"); relevant.add("aws");
+            relevant.add("s3"); relevant.add("config");
+        }
         // Always explore model/entity/dto for skill detection
         relevant.add("model");
         relevant.add("entity");
@@ -2139,12 +2656,30 @@ public class JobMatcherService {
                 return trimmed.length() > 120 ? trimmed.substring(0, 120) + "..." : trimmed;
             }
         }
+
+        // Generic fallback for skills proven by alias text rather than by a
+        // code annotation (Redis, Kafka, MongoDB, SQL Server, ...): return the
+        // first line — comments and imports included — that contains a
+        // standalone alias occurrence (e.g. "spring.data.redis"). Without this,
+        // a fetched RedisConfig.java / KafkaConsumer.java would yield no
+        // evidence text and the skill could never be credited.
+        Pattern generic = SKILL_PATTERNS.get(skill);
+        if (generic != null) {
+            for (String line : lines) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+                String lowerLine = trimmed.toLowerCase(Locale.ROOT);
+                if (generic.matcher(lowerLine).find()) {
+                    return trimmed.length() > 120 ? trimmed.substring(0, 120) + "..." : trimmed;
+                }
+            }
+        }
         return "";
     }
 
     // ────────────────────────── Raw file fetching ──────────────────────────
 
-    private record FileResult(String content, String errorType) {}
+    record FileResult(String content, String errorType) {}
 
     private FileResult fetchRawRepositoryFile(String owner, String repo, String branch, String file,
                                                 MatchContext ctx) {
