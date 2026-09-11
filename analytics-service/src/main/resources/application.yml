@@ -3,36 +3,33 @@ spring:
     name: analytics-service
 
   datasource:
-    # DATABASE_URL / DATABASE_USERNAME / DATABASE_PASSWORD are the production
-    # names; the SPRING_DATASOURCE_* forms (used by docker-compose) still work
-    # and take precedence when both are set (relaxed binding).
-      url: ${SPRING_DATASOURCE_URL}
-      username: ${SPRING_DATASOURCE_USERNAME}
-      password: ${SPRING_DATASOURCE_PASSWORD}
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
   jpa:
     hibernate:
       ddl-auto: update
-    # SQL logging off by default; enable with SHOW_SQL=true when debugging locally.
     show-sql: ${SHOW_SQL:false}
-    # Production: don't keep a lazy-load session open during view/serialization.
     open-in-view: false
 
   autoconfigure:
-    # JWT-filter auth only — no default in-memory user / generated password.
     exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+
 
 server:
   port: ${PORT:8082}
 
+
 eureka:
   client:
-    # Disabled by default: the api-gateway routes via direct URLs (Render).
-    # Enable (EUREKA_CLIENT_ENABLED=true) only when a reachable Eureka
-    # registry is deployed and instances register routable hostnames.
-    enabled: ${EUREKA_CLIENT_ENABLED:false}
+    enabled: ${EUREKA_CLIENT_ENABLED:true}
+    register-with-eureka: true
+    fetch-registry: true
+
     service-url:
-      # EUREKA_URL is the production name; EUREKA_CLIENT_SERVICEURL_DEFAULTZONE
-      # (docker-compose) still overrides it via relaxed binding when set.
-      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
+      defaultZone: ${EUREKA_URL:https://git-insight-eureka.onrender.com/eureka/}
+
   instance:
-    prefer-ip-address: ${EUREKA_PREFER_IP:false}
+    prefer-ip-address: false
+    hostname: ${RENDER_EXTERNAL_HOSTNAME:localhost}
