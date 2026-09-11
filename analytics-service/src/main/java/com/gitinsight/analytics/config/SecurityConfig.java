@@ -13,26 +13,31 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import java.util.List;
 
 @Configuration
-@EnableWebSecurity
 public class SecurityConfig {
 
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
 
         http
+                // Enable CORS
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
 
+                // Disable CSRF because this is a REST API
                 .csrf(csrf -> csrf.disable())
 
                 .authorizeHttpRequests(auth -> auth
-                        // CORS preflight
+
+                        // Allow browser CORS preflight requests
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
+                        // Health endpoints
                         .requestMatchers("/api/health").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
 
+                        // Report endpoints
                         .requestMatchers("/api/reports/**").permitAll()
 
+                        // Currently allow all other requests
                         .anyRequest().permitAll()
                 );
 
@@ -44,27 +49,37 @@ public class SecurityConfig {
 
         CorsConfiguration configuration = new CorsConfiguration();
 
+        // Frontend URLs
         configuration.setAllowedOrigins(List.of(
                 "https://git-insight-ai-one.vercel.app",
                 "http://localhost:5173"
         ));
 
+        // Allowed HTTP methods
         configuration.setAllowedMethods(List.of(
                 "GET",
                 "POST",
                 "PUT",
+                "PATCH",
                 "DELETE",
                 "OPTIONS"
         ));
 
-        configuration.setAllowedHeaders(List.of(
-                "Authorization",
+        // Allow all request headers
+        configuration.setAllowedHeaders(List.of("*"));
+
+        // Required because your frontend uses cookies
+        configuration.setAllowCredentials(true);
+
+        // Expose useful response headers
+        configuration.setExposedHeaders(List.of(
+                "Content-Disposition",
                 "Content-Type",
-                "Accept",
-                "Origin"
+                "Content-Length"
         ));
 
-        configuration.setAllowCredentials(true);
+        // Cache preflight response for 1 hour
+        configuration.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source =
                 new UrlBasedCorsConfigurationSource();
