@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
@@ -142,12 +142,15 @@ const METRIC_ICONS: Record<string, any> = {
 
 function MetricCard({
   score,
+  user2Score,
   user1Value,
   user2Value,
   user1Name,
   user2Name,
 }: {
   score: MetricScore;
+  /** The second user's own detail record for this metric (explanation/tip owner). */
+  user2Score: MetricScore | null;
   user1Value: number;
   user2Value: number;
   user1Name: string;
@@ -156,6 +159,19 @@ function MetricCard({
   const [showSuggestion, setShowSuggestion] = useState(false);
   const Icon = METRIC_ICONS[score.icon] || BarChart3;
   const isWinner = user1Value >= user2Value;
+
+  // The explanation/improvement-tip shown must belong to the user it describes.
+  // Each user's score carries its own detail record, so pick the leader's
+  // (falling back to the other user's when one is missing).
+  const leaderDetail = isWinner ? score : user2Score;
+  const explanation = leaderDetail?.explanation || score.explanation;
+  const improvementSuggestion =
+    leaderDetail?.improvementSuggestion || score.improvementSuggestion;
+  const explanationOwner = isWinner
+    ? user1Name
+    : user2Score
+      ? user2Name
+      : user1Name;
 
   return (
     <motion.div variants={itemVariants}>
@@ -206,8 +222,11 @@ function MetricCard({
             />
           </div>
 
-          {/* Explanation */}
-          <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">{score.explanation}</p>
+          {/* Explanation — attributed to the user it describes */}
+          <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
+            <span className="font-medium text-foreground/80">{explanationOwner}:</span>{" "}
+            {explanation}
+          </p>
 
           {/* Weight indicator */}
           <div className="flex items-center gap-1.5 mb-1">
@@ -232,7 +251,7 @@ function MetricCard({
               animate={{ opacity: 1, height: "auto" }}
               className="text-[10px] text-amber-400/80 mt-1 leading-relaxed"
             >
-              {score.improvementSuggestion}
+              {improvementSuggestion}
             </motion.p>
           )}
         </CardContent>
@@ -443,6 +462,8 @@ export function ComparePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CompareResult | null>(null);
+  // Guards against a slow stale response overwriting a newer comparison.
+  const requestSeq = useRef(0);
 
   // Prefill from URL (?user1=..&user2=..) — enables "Compare after analyze" and shareable links
   useEffect(() => {
@@ -460,21 +481,26 @@ export function ComparePage() {
       return;
     }
 
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
     setResult(null);
 
     try {
       const compareResult = await githubApi.compare(u1, u2);
+      if (seq !== requestSeq.current) return; // a newer compare superseded this one
       setResult(compareResult);
       setSearchParams({ user1: u1, user2: u2 }, { replace: true });
-      if (!compareResult.user1.profile) toast.error(`Could not find user: ${u1}`);
-      if (!compareResult.user2.profile) toast.error(`Could not find user: ${u2}`);
+      // Per-user errors are surfaced individually — one bad username no longer
+      // hides the other user's data.
+      if (compareResult.user1.error) toast.error(compareResult.user1.error);
+      if (compareResult.user2.error) toast.error(compareResult.user2.error);
       if (compareResult.user1.profile && compareResult.user2.profile) toast.success("Comparison ready!");
     } catch (err: any) {
+      if (seq !== requestSeq.current) return;
       setError(err.message || "Failed to compare. Please try again.");
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }, [user1, user2, setSearchParams]);
 
@@ -664,12 +690,14 @@ export function ComparePage() {
                       const detailKey = (key + "Details") as keyof DeveloperScore;
                       const v1 = result.user1.score![key] as unknown as number;
                       const v2 = result.user2.score![key] as unknown as number;
-                      const detail = result.user1.score![detailKey] as MetricScore | null;
-                      if (!detail) return null;
+                      const detail1 = result.user1.score![detailKey] as MetricScore | null;
+                      const detail2 = result.user2.score![detailKey] as MetricScore | null;
+                      if (!detail1 && !detail2) return null;
                       return (
                         <MetricCard
                           key={key}
-                          score={detail}
+                          score={(detail1 || detail2)!}
+                          user2Score={detail2}
                           user1Value={v1}
                           user2Value={v2}
                           user1Name={result.user1.profile?.name || result.user1.username}

@@ -9,6 +9,17 @@ eureka:
   client:
     register-with-eureka: false
     fetch-registry: false
+    service-url:
+      # What this server advertises as ITS OWN registry URL on the dashboard
+      # (DS Replicas / General Info → registered-replicas). With no explicit
+      # serviceUrl, Eureka falls back to its built-in localhost:8761 default,
+      # which is wrong in production (the deployed dashboard showed
+      # "http://localhost:8761/eureka/" as a replica).
+      #
+      # Local development keeps the localhost default.
+      # Production (Render) sets:
+      #   EUREKA_SERVER_URL=https://git-insight-eureka.onrender.com/eureka/
+      defaultZone: ${EUREKA_SERVER_URL:http://localhost:8761/eureka/}
 
   server:
     enable-self-preservation: true

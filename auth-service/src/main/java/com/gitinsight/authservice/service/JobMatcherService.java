@@ -561,6 +561,17 @@ public class JobMatcherService {
     private JobMatchResponse matchInternal(String jdText, List<String> usernames, String source,
                                            boolean includeAi, MatchContext ctx) {
         List<String> required = extractRequiredSkills(jdText);
+        Map<String, SkillCategory> classification = extractSkillClassification(jdText);
+        Set<String> mandatorySkills = classification.entrySet().stream()
+                .filter(e -> e.getValue() == SkillCategory.MANDATORY)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Set<String> preferredSkills = classification.entrySet().stream()
+                .filter(e -> e.getValue() == SkillCategory.PREFERRED)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, String> classificationView = new LinkedHashMap<>();
+        classification.forEach((skill, cat) -> classificationView.put(skill, cat.name()));
         List<JobMatchCandidate> results = new ArrayList<>();
         int failed = 0;
 
@@ -572,7 +583,7 @@ public class JobMatcherService {
                 break;
             }
             try {
-                results.add(analyzeCandidate(username, required, ctx));
+                results.add(analyzeCandidate(username, required, mandatorySkills, ctx));
             } catch (Exception e) {
                 failed++;
                 log.warn("Job match: failed to analyze candidate {}: {}", username, e.getMessage());
@@ -583,7 +594,8 @@ public class JobMatcherService {
 
         String jobTitle = inferJobTitle(jdText);
         JobMatchResponse base = new JobMatchResponse(jobTitle, required, source,
-                usernames.size(), results.size(), failed, results, false, null, List.of());
+                usernames.size(), results.size(), failed, results, false, null, List.of(),
+                mandatorySkills, preferredSkills, classificationView);
 
         if (!includeAi || results.isEmpty()) {
             return base;
@@ -605,7 +617,8 @@ public class JobMatcherService {
                 List<AiExplanation> explanations = mergeAiExplanations(results, byUsername);
                 return new JobMatchResponse(jobTitle, required, source,
                         usernames.size(), results.size(), failed, results,
-                        true, ai.model(), explanations);
+                        true, ai.model(), explanations,
+                        mandatorySkills, preferredSkills, classificationView);
             }
         } catch (Exception e) {
             log.warn("Job match: AI explanations unavailable: {}", e.getMessage());
@@ -746,6 +759,106 @@ public class JobMatcherService {
                 .collect(Collectors.toList());
     }
 
+    // ── JD skill classification (required / preferred / mandatory) ──
+
+    /** How the job description classifies a skill. */
+    public enum SkillCategory { REQUIRED, PREFERRED, MANDATORY }
+
+    /**
+     * Classify every skill mentioned in the job description.
+     *
+     * <p>The whole JD is processed — a "Mandatory requirements" section near the
+     * END of the document is just as visible as the opening body text. A line
+     * ending in ":" whose header names a section type switches the active
+     * section for subsequent list items:
+     * <ul>
+     *   <li>"Mandatory requirements..." / "Must have" → {@link SkillCategory#MANDATORY}</li>
+     *   <li>"Preferred skills" / "Nice to have" / "Bonus" → {@link SkillCategory#PREFERRED}</li>
+     *   <li>"Requirements" / "Required skills" / "Skills" → {@link SkillCategory#REQUIRED}</li>
+     *   <li>"Responsibilities" / "What you'll do" → resets to REQUIRED (body work)</li>
+     * </ul>
+     * Skills named outside any marked section (the JD body) are REQUIRED.
+     * A skill named in several sections keeps its FIRST classification.
+     */
+    public Map<String, SkillCategory> extractSkillClassification(String jdText) {
+        if (jdText == null || jdText.isBlank()) return Map.of();
+        Map<String, SkillCategory> classification = new LinkedHashMap<>();
+        SkillCategory currentSection = SkillCategory.REQUIRED;
+
+        for (String rawLine : jdText.split("\\r?\\n")) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) continue;
+
+            SkillCategory header = sectionMarker(line);
+            if (header != null) {
+                currentSection = header;
+                continue;
+            }
+
+            for (String skill : skillsInLine(line)) {
+                classification.putIfAbsent(skill, currentSection);
+            }
+        }
+        return classification;
+    }
+
+    /**
+     * Detect a section header line (e.g. "Preferred skills:") and return the
+     * category it switches to, or null when the line is not a section header.
+     */
+    private static SkillCategory sectionMarker(String line) {
+        String lower = line.toLowerCase(Locale.ROOT).replace('*', ' ').trim();
+        if (!lower.endsWith(":")) return null;
+        String head = lower.substring(0, lower.length() - 1).trim();
+        // Strip leading markdown bullets/dashes from the header.
+        head = head.replaceAll("^[-#\\s]+", "").trim();
+        if (head.isEmpty() || head.length() > 80) return null;
+        if (head.contains("mandatory") || head.contains("must have") || head.contains("must-have")) {
+            return SkillCategory.MANDATORY;
+        }
+        if (head.contains("preferred") || head.contains("nice to have") || head.contains("nice-to-have")
+                || head.contains("bonus") || head.contains("good to have")) {
+            return SkillCategory.PREFERRED;
+        }
+        if (head.contains("responsibilit") || head.contains("what you") || head.contains("about the role")
+                || head.contains("duties") || head.contains("your profile")) {
+            // Body work sections: skills here are core requirements, not preferences.
+            return SkillCategory.REQUIRED;
+        }
+        if (head.contains("require") || head.contains("core") || head.contains("essential")
+                || head.contains("skill") || head.contains("qualification")) {
+            return SkillCategory.REQUIRED;
+        }
+        return null;
+    }
+
+    /** Canonical skills mentioned anywhere in one line (word-boundary aware). */
+    private static List<String> skillsInLine(String line) {
+        List<String> found = new ArrayList<>();
+        for (Map.Entry<String, Pattern> e : SKILL_PATTERNS.entrySet()) {
+            if (e.getValue().matcher(line).find()) {
+                found.add(e.getKey());
+            }
+        }
+        return found;
+    }
+
+    /** Skills the JD explicitly marks mandatory ("must have"). */
+    public Set<String> extractMandatorySkills(String jdText) {
+        return extractSkillClassification(jdText).entrySet().stream()
+                .filter(e -> e.getValue() == SkillCategory.MANDATORY)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    /** Skills the JD explicitly marks preferred ("nice to have"). */
+    public Set<String> extractPreferredSkills(String jdText) {
+        return extractSkillClassification(jdText).entrySet().stream()
+                .filter(e -> e.getValue() == SkillCategory.PREFERRED)
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
     /** First non-blank, markdown-stripped line of the JD, capped at 80 chars. */
     public String inferJobTitle(String jdText) {
         if (jdText == null) return "Job Description";
@@ -769,6 +882,29 @@ public class JobMatcherService {
     /** 60% skill match + 40% developer score, clamped 0-100. */
     static int computeMatchScore(int skillMatchPercent, int developerScore) {
         return Math.max(0, Math.min(100, (int) Math.round(0.6 * skillMatchPercent + 0.4 * developerScore)));
+    }
+
+    /** Weight applied to a skill the JD marks mandatory. */
+    static final double MANDATORY_SKILL_WEIGHT = 2.0;
+
+    /**
+     * Skill-match percentage where skills the JD marks MANDATORY count double.
+     * A candidate missing a mandatory skill therefore cannot hide behind
+     * matches on preferred/optional skills.
+     */
+    static int computeWeightedSkillMatchPercent(List<String> required, List<String> matched,
+                                                Set<String> mandatorySkills) {
+        if (required == null || required.isEmpty()) return 100;
+        double totalWeight = 0;
+        double matchedWeight = 0;
+        for (String skill : required) {
+            double w = mandatorySkills != null && mandatorySkills.contains(skill)
+                    ? MANDATORY_SKILL_WEIGHT : 1.0;
+            totalWeight += w;
+            if (matched.contains(skill)) matchedWeight += w;
+        }
+        if (totalWeight == 0) return 0;
+        return (int) Math.round(matchedWeight * 100.0 / totalWeight);
     }
 
     // ────────────────────────── AI step ──────────────────────────
@@ -810,7 +946,8 @@ public class JobMatcherService {
 
     // ────────────────────────── Internals ──────────────────────────
 
-    private JobMatchCandidate analyzeCandidate(String username, List<String> required, MatchContext ctx) {
+    private JobMatchCandidate analyzeCandidate(String username, List<String> required,
+                                               Set<String> mandatorySkills, MatchContext ctx) {
         long start = System.currentTimeMillis();
         ctx.evidenceRequestBudget = ctx.budgetCap;
         ctx.evidenceStartNanos = System.nanoTime();
@@ -851,8 +988,7 @@ public class JobMatcherService {
         List<String> matched = required.stream().filter(s -> matches(finalCorpus, s)).collect(Collectors.toList());
         List<String> missing = required.stream().filter(s -> !matched.contains(s)).collect(Collectors.toList());
 
-        int skillMatchPercent = required.isEmpty() ? 100
-                : (int) Math.round(matched.size() * 100.0 / required.size());
+        int skillMatchPercent = computeWeightedSkillMatchPercent(required, matched, mandatorySkills);
         // Null-safe: if deadline was reached during API calls, use defaults
         int developerScore = score != null ? score.overallScore() : 0;
         String level = score != null ? score.level() : "Unknown";

@@ -16,6 +16,7 @@ import {
   type LanguageBreakdown,
   type JobMatchResponse,
   type JobMatchCandidate,
+  type JobMatchJobStatus,
 } from "@/services/api";
 import toast from "react-hot-toast";
 import {
@@ -70,6 +71,8 @@ export function RecruiterDashboard() {
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<JobMatchResponse | null>(null);
   const [useAi, setUseAi] = useState(false);
+  const [matchProgress, setMatchProgress] = useState<JobMatchJobStatus | null>(null);
+  const [matchError, setMatchError] = useState<string | null>(null);
 
   const loadCandidates = useCallback(async () => {
     try {
@@ -214,23 +217,47 @@ export function RecruiterDashboard() {
   const handleRunMatch = async () => {
     if (!jdFile) return;
     setMatchLoading(true);
+    setMatchError(null);
     setMatchResult(null);
+    setMatchProgress(null);
     try {
-      const res = await recruiterApi.matchByJobDescription(jdFile, usersFile, useAi);
-      if (res.success) {
-        setMatchResult(res.data);
-        if (res.data.results.length === 0) {
-          toast(res.message || "No candidates to match");
-        } else {
-          toast.success(`Ranked ${res.data.results.length} candidates by job fit`);
-        }
-      } else {
-        toast.error(res.message || "Match failed");
+      // Async path: deep evidence analysis runs on a background worker —
+      // the synchronous endpoint is bounded by the 50s gateway timeout and
+      // silently shallow-analyzes candidates when the clock runs out.
+      const start = await recruiterApi.matchByJobDescriptionAsync(jdFile, usersFile, useAi);
+      if (!start.success || !start.data?.jobId) {
+        toast.error(start.message || "Match could not be started");
+        setMatchLoading(false);
+        return;
       }
-    } catch {
-      toast.error("Match failed — is the backend running?");
+
+      const jobId = start.data.jobId;
+      // Poll every 2s until terminal status.
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const status = await recruiterApi.getJobMatchStatus(jobId);
+        if (!status.success || !status.data) {
+          throw new Error(status.message || "Lost track of the job match");
+        }
+        setMatchProgress(status.data);
+        if (status.data.status === "COMPLETED" || status.data.status === "PARTIAL") {
+          if (status.data.result) {
+            setMatchResult(status.data.result);
+            toast.success(`Ranked ${status.data.result.results.length} candidates by job fit`);
+          }
+          break;
+        }
+        if (status.data.status === "FAILED") {
+          throw new Error(status.data.errorMessage || "Job match failed");
+        }
+      }
+    } catch (err: any) {
+      const msg = err?.message || "Match failed — is the backend running?";
+      setMatchError(msg);
+      toast.error(msg);
     } finally {
       setMatchLoading(false);
+      setMatchProgress(null);
     }
   };
 
@@ -430,9 +457,11 @@ export function RecruiterDashboard() {
                 </label>
                 {matchLoading && (
                   <span className="text-[11px] text-muted-foreground animate-pulse">
-                    {useAi
-                      ? "Scoring candidates & asking Gemini for fit explanations…"
-                      : "Fetching live scores, language stacks & repos…"}
+                    {matchProgress
+                      ? `Deep analysis: ${matchProgress.processed}/${matchProgress.total} candidates scored (${matchProgress.progressPercent}%)`
+                      : useAi
+                        ? "Starting deep analysis & asking Gemini for fit explanations…"
+                        : "Starting deep evidence analysis…"}
                   </span>
                 )}
               </div>
@@ -456,6 +485,16 @@ export function RecruiterDashboard() {
                 <span className="text-[11px] px-2 py-1 rounded-full bg-muted/40 text-muted-foreground">
                   {matchResult.requiredSkills.length} required skills
                 </span>
+                {(matchResult.mandatorySkills?.length ?? 0) > 0 && (
+                  <span className="text-[11px] px-2 py-1 rounded-full bg-red-500/10 text-red-400">
+                    {matchResult.mandatorySkills!.length} mandatory (×2 weight)
+                  </span>
+                )}
+                {(matchResult.preferredSkills?.length ?? 0) > 0 && (
+                  <span className="text-[11px] px-2 py-1 rounded-full bg-sky-500/10 text-sky-400">
+                    {matchResult.preferredSkills!.length} preferred
+                  </span>
+                )}
                 <span className="text-[11px] px-2 py-1 rounded-full bg-primary/10 text-primary">
                   {matchResult.processed} candidates scored
                 </span>
@@ -484,6 +523,14 @@ export function RecruiterDashboard() {
               </div>
             </div>
 
+            {matchError && (
+              <Card className="p-3.5 mb-3">
+                <p className="text-[11px] text-red-400 flex items-center gap-1.5">
+                  <XCircle className="w-3 h-3" />
+                  {matchError}
+                </p>
+              </Card>
+            )}
             {matchResult.results.length === 0 ? (
               <Card className="p-10 text-center">
                 <p className="text-sm text-muted-foreground">
@@ -589,6 +636,13 @@ export function RecruiterDashboard() {
                             {c.matchedSkills.slice(0, 7).map((s) => (
                               <span
                                 key={s}
+                                title={
+                                  matchResult.skillCategories?.[s] === "MANDATORY"
+                                    ? "Mandatory skill — proven by repository evidence"
+                                    : matchResult.skillCategories?.[s] === "PREFERRED"
+                                      ? "Preferred skill — proven by repository evidence"
+                                      : "Required skill — proven by repository evidence"
+                                }
                                 className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center gap-1"
                               >
                                 <CheckCircle2 className="w-2.5 h-2.5" />
@@ -598,6 +652,13 @@ export function RecruiterDashboard() {
                             {c.missingSkills.slice(0, 7).map((s) => (
                               <span
                                 key={s}
+                                title={
+                                  matchResult.skillCategories?.[s] === "MANDATORY"
+                                    ? "Mandatory skill — missing (counts double against the match)"
+                                    : matchResult.skillCategories?.[s] === "PREFERRED"
+                                      ? "Preferred skill — missing"
+                                      : "Required skill — missing"
+                                }
                                 className="text-[10px] px-2 py-0.5 rounded-full bg-muted/30 text-muted-foreground flex items-center gap-1"
                               >
                                 <XCircle className="w-2.5 h-2.5 text-red-400/70" />

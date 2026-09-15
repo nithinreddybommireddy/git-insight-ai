@@ -45,6 +45,11 @@ services:
       target: eureka-server
     ports:
       - "8761:8761"
+    environment:
+      # What the dashboard advertises as this server's own replica URL.
+      # Local default stays localhost; production overrides via EUREKA_SERVER_URL
+      # (Render: https://git-insight-eureka.onrender.com/eureka/).
+      EUREKA_SERVER_URL: ${EUREKA_SERVER_URL:-http://localhost:8761/eureka/}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8761/api/health || exit 1"]
       interval: 10s

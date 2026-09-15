@@ -1,11 +1,17 @@
 package com.gitinsight.authservice.dto.response;
 
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Result of a recruiter job-description file match — a fresh, ranked
  * candidate search scored against the skills required by the job.
  * Optionally enriched with per-candidate AI explanations (Gemini).
+ *
+ * <p>Skills from the job description are also classified (REQUIRED /
+ * PREFERRED / MANDATORY) so the UI can show which gaps matter most and the
+ * skill-match percentage can weight mandatory skills double.
  */
 public record JobMatchResponse(
         String jobTitle,
@@ -17,8 +23,27 @@ public record JobMatchResponse(
         List<JobMatchCandidate> results,
         boolean aiEnabled,        // true when AI explanations were generated
         String aiModel,           // e.g. "gemini-2.0-flash"
-        List<AiExplanation> aiExplanations
+        List<AiExplanation> aiExplanations,
+        Set<String> mandatorySkills,   // JD skills explicitly marked mandatory ("must have")
+        Set<String> preferredSkills,   // JD skills explicitly marked preferred ("nice to have")
+        Map<String, String> skillCategories // skill → REQUIRED | PREFERRED | MANDATORY
 ) {
+
+    /** Canonical constructor — keeps invariants (never-null collections). */
+    public JobMatchResponse {
+        if (mandatorySkills == null) mandatorySkills = Set.of();
+        if (preferredSkills == null) preferredSkills = Set.of();
+        if (skillCategories == null) skillCategories = Map.of();
+    }
+
+    /** Back-compat constructor used by existing tests (no classification). */
+    public JobMatchResponse(String jobTitle, List<String> requiredSkills, String source,
+                            int total, int processed, int failed,
+                            List<JobMatchCandidate> results, boolean aiEnabled, String aiModel,
+                            List<AiExplanation> aiExplanations) {
+        this(jobTitle, requiredSkills, source, total, processed, failed, results,
+                aiEnabled, aiModel, aiExplanations, Set.of(), Set.of(), Map.of());
+    }
 
     public static JobMatchResponse empty(String source) {
         return new JobMatchResponse("", List.of(), source, 0, 0, 0, List.of(), false, null, List.of());
@@ -35,7 +60,7 @@ public record JobMatchResponse(
             int developerScore,
             String level,
             int matchScore,          // 0-100 blend of skill match + developer score
-            int skillMatchPercent,   // 0-100 share of required skills present
+            int skillMatchPercent,   // 0-100 share of required skills present (mandatory skills weighted ×2)
             List<String> matchedSkills,
             List<String> missingSkills,
             List<String> languages,

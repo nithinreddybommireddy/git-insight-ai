@@ -70,6 +70,11 @@ public class JobMatchJobService {
      * If the thread pool rejects the job (queue full), the job is immediately
      * marked FAILED — it is never left permanently QUEUED.
      *
+     * <p>The FULL job description text is persisted (async matching runs skill
+     * extraction and classification on it, so truncating here silently dropped
+     * mandatory requirements listed near the end of long JDs). The AI prompt
+     * still applies its own smaller truncation downstream.
+     *
      * @return the created job (with ID and status set)
      * @throws RuntimeException if the job cannot be created or enqueued
      */
@@ -80,7 +85,7 @@ public class JobMatchJobService {
         JobMatchJob job = new JobMatchJob();
         job.setRecruiter(recruiter);
         job.setStatus(JobMatchJob.JobStatus.QUEUED);
-        job.setJdText(truncate(jdText, 3500));
+        job.setJdText(jdText);
         job.setCandidatePoolJson(toJson(usernames));
         job.setRequiredSkillsJson(toJson(requiredSkills));
         job.setSource(source);
@@ -338,10 +343,5 @@ public class JobMatchJobService {
         } catch (JsonProcessingException e) {
             throw new RuntimeException("Failed to serialize to JSON", e);
         }
-    }
-
-    private String truncate(String text, int maxChars) {
-        if (text == null) return null;
-        return text.length() <= maxChars ? text : text.substring(0, maxChars);
     }
 }

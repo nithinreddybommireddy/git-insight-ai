@@ -329,29 +329,13 @@ export const githubApi = {
   },
 
   compare: async (user1: string, user2: string): Promise<CompareResult> => {
-    const [profile1, profile2, repos1, repos2, score1, score2] = await Promise.all([
-      githubApi.getProfile(user1),
-      githubApi.getProfile(user2),
-      githubApi.getRepositories(user1),
-      githubApi.getRepositories(user2),
-      githubApi.getDeveloperScore(user1),
-      githubApi.getDeveloperScore(user2),
+    // Both users are fetched fully independently: one user's failure can no
+    // longer blank out the other user's data.
+    const [u1, u2] = await Promise.all([
+      fetchCompareUser(user1),
+      fetchCompareUser(user2),
     ]);
-
-    return {
-      user1: {
-        username: user1,
-        profile: profile1.success ? profile1.data : null,
-        repos: repos1.success ? repos1.data : [],
-        score: score1.success ? score1.data : null,
-      },
-      user2: {
-        username: user2,
-        profile: profile2.success ? profile2.data : null,
-        repos: repos2.success ? repos2.data : [],
-        score: score2.success ? score2.data : null,
-      },
-    };
+    return { user1: u1, user2: u2 };
   },
 };
 
@@ -360,11 +344,64 @@ export interface CompareUserData {
   profile: GitHubProfile | null;
   repos: Repository[];
   score: DeveloperScore | null;
+  /** Set when this user's data could not be fetched — surfaced per-user by the UI. */
+  error?: string;
 }
 
 export interface CompareResult {
   user1: CompareUserData;
   user2: CompareUserData;
+}
+
+/** Shape of the per-user result the compare fetcher resolves with. */
+type CompareUserOutcome = CompareUserData;
+
+/**
+ * Fetch one user's profile + repos + score independently. Never throws: a
+ * failure for THIS user must not prevent the other user's data from loading
+ * (the whole-compare Promise.all previously discarded both users' results).
+ */
+async function fetchCompareUser(
+  username: string
+): Promise<CompareUserOutcome> {
+  const user: CompareUserData = {
+    username,
+    profile: null,
+    repos: [],
+    score: null,
+  };
+
+  // Fire this user's three requests in parallel — but a failure in any one
+  // only marks THIS user as failed.
+  const [profileRes, reposRes, scoreRes] = await Promise.allSettled([
+    githubApi.getProfile(username),
+    githubApi.getRepositories(username),
+    githubApi.getDeveloperScore(username),
+  ]);
+
+  if (profileRes.status === "fulfilled") {
+    const r = profileRes.value;
+    if (r.success && r.data) user.profile = r.data;
+    else user.error = r.message || `Profile not found: ${username}`;
+  } else {
+    user.error =
+      (profileRes.reason as any)?.message || `Failed to load profile: ${username}`;
+  }
+
+  if (reposRes.status === "fulfilled" && reposRes.value.success) {
+    user.repos = reposRes.value.data || [];
+  }
+
+  if (scoreRes.status === "fulfilled") {
+    const r = scoreRes.value;
+    if (r.success && r.data) user.score = r.data;
+    else if (!user.error) user.error = r.message || `Score unavailable: ${username}`;
+  } else if (!user.error) {
+    user.error =
+      (scoreRes.reason as any)?.message || `Failed to load score: ${username}`;
+  }
+
+  return user;
 }
 
 // ==================== Recruiter Types ====================
@@ -411,6 +448,19 @@ export interface JobMatchCandidate {
   missingSkills: string[];
   languages: string[];
   topRepos: string[];
+  /** Per-skill deterministic evidence records (best evidence per matched skill). */
+  skillEvidence?: JobMatchSkillEvidence[];
+}
+
+export interface JobMatchSkillEvidence {
+  skill: string;
+  confidence: "HIGH" | "MEDIUM" | "LOW";
+  repository: string;
+  module: string;
+  file: string;
+  branch: string;
+  evidenceType: string;
+  evidencePattern: string;
 }
 
 export interface JobMatchResponse {
@@ -424,6 +474,28 @@ export interface JobMatchResponse {
   aiEnabled: boolean;
   aiModel: string | null;
   aiExplanations: JobMatchAiExplanation[];
+  /** Skills the JD explicitly marks mandatory ("must have") — weighted ×2 in scoring. */
+  mandatorySkills?: string[];
+  /** Skills the JD explicitly marks preferred ("nice to have"). */
+  preferredSkills?: string[];
+  /** skill → REQUIRED | PREFERRED | MANDATORY */
+  skillCategories?: Record<string, string>;
+}
+
+export interface JobMatchJobStatus {
+  jobId: number;
+  status: "QUEUED" | "RUNNING" | "COMPLETED" | "PARTIAL" | "FAILED";
+  jobTitle: string | null;
+  total: number;
+  processed: number;
+  failed: number;
+  progressPercent: number;
+  aiEnabled: boolean;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  errorMessage: string | null;
+  result: JobMatchResponse | null;
 }
 
 export interface JobMatchAiExplanation {
@@ -719,6 +791,27 @@ export const recruiterApi = {
     // axios (v1) clears the default JSON content-type for FormData so the
     // browser sets the correct multipart boundary automatically.
     const { data } = await api.post<ApiResponse<JobMatchResponse>>("/recruiter/match", form);
+    return data;
+  },
+
+  /**
+   * Start an ASYNC job match: returns a jobId immediately; deep evidence
+   * analysis runs on a background worker (deep analysis can exceed the 50s
+   * gateway timeout the synchronous endpoint is bounded by). Poll
+   * {@link getJobMatchStatus} until status is COMPLETED / PARTIAL / FAILED.
+   */
+  matchByJobDescriptionAsync: async (file: File, usernamesFile?: File | null, ai?: boolean): Promise<ApiResponse<JobMatchJobStatus>> => {
+    const form = new FormData();
+    form.append("file", file);
+    if (usernamesFile) form.append("usernames", usernamesFile);
+    if (ai) form.append("ai", "true");
+    const { data } = await api.post<ApiResponse<JobMatchJobStatus>>("/recruiter/match/async", form);
+    return data;
+  },
+
+  /** Poll an async job match's progress/results. */
+  getJobMatchStatus: async (jobId: number): Promise<ApiResponse<JobMatchJobStatus>> => {
+    const { data } = await api.get<ApiResponse<JobMatchJobStatus>>(`/recruiter/match/${jobId}`);
     return data;
   },
 };
