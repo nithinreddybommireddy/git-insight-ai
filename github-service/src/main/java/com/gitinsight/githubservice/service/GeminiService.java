@@ -44,9 +44,22 @@ import java.util.stream.Collectors;
 public class GeminiService {
 
     private static final Logger log = LoggerFactory.getLogger(GeminiService.class);
-    private static final String GEMINI_API_URL =
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent";
-    private static final String MODEL_NAME = "gemini-3.1-flash-lite";
+
+    /**
+     * Gemini endpoint and model are configuration, not code: they pin an
+     * external API version and model generation that ops may need to change
+     * (or point at a proxy) without a rebuild.
+     *
+     * <p>Configuration keys (env): GEMINI_MODEL, GEMINI_API_BASE_URL.
+     */
+    private static final String DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite";
+    private static final String DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+    private static final String GEMINI_API_URL_TEMPLATE =
+            "%s/v1beta/models/%s:generateContent";
+
+    private final String geminiApiUrl;
+    private final String modelName;
+
     private static final int MAX_OUTPUT_TOKENS = 800;
     // End-user copy for when the Gemini call itself fails (rate limit, quota,
     // timeout, 5xx) — never exposes API keys or backend configuration.
@@ -75,10 +88,14 @@ public class GeminiService {
     private final GitHubCacheService cacheService;
 
     public GeminiService(@Value("${gemini.api.key:}") String apiKey,
+                         @Value("${gemini.api.base-url:" + DEFAULT_GEMINI_BASE_URL + "}") String apiBaseUrl,
+                         @Value("${gemini.api.model:" + DEFAULT_GEMINI_MODEL + "}") String model,
                          GitHubCacheService cacheService) {
         this.apiKey = apiKey;
         this.enabled = StringUtils.hasText(apiKey);
         this.cacheService = cacheService;
+        this.modelName = model;
+        this.geminiApiUrl = String.format(GEMINI_API_URL_TEMPLATE, apiBaseUrl, this.modelName);
 
         // Explicit timeouts so a hung upstream cannot occupy a Spring worker
         // thread indefinitely (Gemini generation needs a longer read timeout).
@@ -231,7 +248,7 @@ public class GeminiService {
             return CommitDiffReviewResponse.deterministic(request);
         }
         parsed.setAiEnabled(true);
-        parsed.setAiModel(MODEL_NAME);
+        parsed.setAiModel(modelName);
         return parsed;
     }
 
@@ -254,7 +271,7 @@ public class GeminiService {
         if (explanations.isEmpty()) {
             return JobMatchAiResponse.disabled();
         }
-        return new JobMatchAiResponse(true, MODEL_NAME, explanations);
+        return new JobMatchAiResponse(true, modelName, explanations);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -299,7 +316,7 @@ public class GeminiService {
             // recommended transport) instead of a query parameter, so the key
             // never appears in URL logs / proxy access logs / tracing.
             Map<String, Object> response = restClient.post()
-                    .uri(GEMINI_API_URL)
+                    .uri(geminiApiUrl)
                     .header("x-goog-api-key", apiKey)
                     .body(requestBody)
                     .retrieve()

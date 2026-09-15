@@ -34,7 +34,10 @@ public class PasswordResetEmailService {
     public PasswordResetEmailService(
             @Value("${app.mail.enabled:false}") boolean mailEnabled,
             @Value("${app.mail.from:noreply@gitinsightai.com}") String mailFrom,
-            @Value("${app.frontend-url:https://git-insight-ai-one.vercel.app}") String frontendUrl,
+            // The single source of truth for this value is application.yml
+            // (app.frontend-url → APP_FRONTEND_URL, default http://localhost:5173).
+            // The old inline production-URL fallback contradicted it.
+            @Value("${app.frontend-url:http://localhost:5173}") String frontendUrl,
             ObjectProvider<JavaMailSender> mailSenderProvider) {
         this.mailEnabled = mailEnabled;
         this.mailFrom = mailFrom;

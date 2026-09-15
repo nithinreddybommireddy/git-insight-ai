@@ -28,8 +28,16 @@ eureka:
     fetch-registry: true
 
     service-url:
-      defaultZone: ${EUREKA_URL:https://git-insight-eureka.onrender.com/eureka/}
+      # Local-first default like every other service; production (Render) sets
+      # EUREKA_URL to the deployed registry. The previous default here pointed
+      # at a hardcoded production URL, which made a bare local boot phone home.
+      defaultZone: ${EUREKA_URL:http://localhost:8761/eureka/}
 
   instance:
     prefer-ip-address: false
     hostname: ${RENDER_EXTERNAL_HOSTNAME:localhost}
+
+app:
+  cors:
+    # Same env-driven convention as auth/github/gateway: CORS_ALLOWED_ORIGINS.
+    allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
