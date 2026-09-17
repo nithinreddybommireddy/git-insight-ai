@@ -176,3 +176,84 @@ body {
   background-size: 200% 100%;
   animation: shimmer 2s infinite;
 }
+
+/* ==========================================================================
+   Print / Export-PDF layout (Reports page)
+
+   The printable report document is rendered by ReportExport into a
+   body-level portal (div[data-print-report]). Everything else on the page
+   (navbar, footer, search/controls, charts, snapshot tables) is screen-only
+   chrome and is hidden below, so the PDF contains exactly one clean,
+   full-width document.
+   ========================================================================== */
+
+@page {
+  margin: 12mm;
+}
+
+/* The printable report document (ReportExport) is portaled to <body>. On
+   screen it is always hidden; print / export-to-PDF reveals it below. */
+[data-print-report] {
+  display: none;
+}
+
+@media print {
+  /* When a printable report is present, drop the entire on-screen app shell
+     (navbar, search, charts, history tables, buttons, footer AND the toast
+     host — they all live inside #root) so the PDF contains exactly one
+     clean, full-width document. Scoped with :has() so printing any other
+     page of the app is unaffected. */
+  body:has([data-print-report]) #root {
+    display: none !important;
+  }
+
+  /* Light, readable print: force the light palette regardless of app theme. */
+  body:has([data-print-report]),
+  body:has([data-print-report]) [data-print-report] {
+    background: #ffffff !important;
+    color: #111827;
+  }
+
+  /* The printable report document fills the page width. */
+  [data-print-report] {
+    display: block !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Keep headings with the content that follows them. */
+  [data-print-report] h2 {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  /* NOTE: no display-forcing on .break-inside-avoid elements — the header
+     row is a flex container and the stats grid a grid container; flattening
+     them to block would stack the avatar/name/score and stat tiles
+     vertically. break-inside: avoid alone keeps them whole on one page. */
+  [data-print-report] .break-inside-avoid-page {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  [data-print-report] .break-inside-avoid {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /* Never let a lone trailing line spill onto an extra page. */
+  [data-print-report] p,
+  [data-print-report] span,
+  [data-print-report] td {
+    orphans: 3;
+    widows: 3;
+  }
+
+  /* Print backgrounds (Chrome strips them by default). */
+  [data-print-report] * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

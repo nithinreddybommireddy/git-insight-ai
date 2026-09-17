@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { FileText, Printer } from "lucide-react";
 import type {
@@ -46,7 +47,7 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
   return (
     <>
       {/* Controls visible on screen only */}
-      <div className="flex gap-2">
+      <div className="flex gap-2 print:hidden">
         <Button
           variant="outline"
           size="sm"
@@ -69,16 +70,15 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
         </Button>
       </div>
 
-      {/* Report Layout — only visible during print */}
-      <div
-        ref={reportRef}
-        className="print-report"
-      >
-        {/* Print-only wrapper */}
-        <div className="hidden print:block">
-          <div className="p-8 max-w-4xl mx-auto">
+      {/* Report document — rendered into a body-level portal so it is never
+          laid out inside the page header flex row (which caused the large
+          blank left column in print). Hidden on screen; shown only when
+          printing / exporting to PDF. */}
+      {createPortal(
+        <div ref={reportRef} data-print-report="true" className="print-report">
+          <div className="w-full p-8">
             {/* Header */}
-            <div className="flex items-center gap-4 mb-6 pb-4 border-b border-gray-300">
+            <div className="flex items-center gap-4 mb-6 pb-4 border-b border-gray-300 break-inside-avoid">
               {profile?.avatarUrl && (
                 <img
                   src={profile.avatarUrl}
@@ -101,7 +101,7 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
 
             {/* Stats grid */}
             {profile && (
-              <div className="grid grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-4 gap-4 mb-6 break-inside-avoid">
                 {[
                   { label: "Repos", value: profile.publicRepositories },
                   { label: "Stars", value: score?.totalStars || 0 },
@@ -118,9 +118,9 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
 
             {/* Score breakdown */}
             {score && (
-              <div className="mb-6">
+              <div className="mb-6 break-inside-avoid">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">10-Point Score Breakdown</h2>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {[
                     { label: "Contribution Recency", value: score.contributionRecency },
                     { label: "Commit Frequency", value: score.commitFrequency },
@@ -133,7 +133,7 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
                     { label: "Popularity", value: score.popularity },
                     { label: "Maintenance", value: score.maintenance },
                   ].map((m) => (
-                    <div key={m.label} className="flex items-center gap-3">
+                    <div key={m.label} className="flex items-center gap-3 break-inside-avoid">
                       <span className="text-sm text-gray-600 w-44">{m.label}</span>
                       <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
                         <div
@@ -152,7 +152,7 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
 
             {/* AI Insights */}
             {score?.insights && (
-              <div className="mb-6 p-4 bg-blue-50 rounded-lg">
+              <div className="mb-6 p-4 bg-blue-50 rounded-lg break-inside-avoid">
                 <h2 className="text-lg font-semibold text-gray-900 mb-2">AI Insights</h2>
                 <p className="text-sm text-gray-700 mb-3">{score.insights.overallAssessment}</p>
                 <div className="grid grid-cols-2 gap-3 text-sm">
@@ -176,7 +176,7 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
 
             {/* Languages */}
             {languages.length > 0 && (
-              <div className="mb-6">
+              <div className="mb-6 break-inside-avoid">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">Languages</h2>
                 <div className="flex flex-wrap gap-2">
                   {languages.map((l) => (
@@ -193,13 +193,13 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
 
             {/* Top Repos */}
             {repos.length > 0 && (
-              <div>
+              <div className="break-inside-avoid-page">
                 <h2 className="text-lg font-semibold text-gray-900 mb-3">
                   Top Repositories ({repos.length})
                 </h2>
-                <div className="space-y-2">
+                <div className="space-y-1.5">
                   {repos.slice(0, 10).map((repo) => (
-                    <div key={repo.name} className="p-3 bg-gray-50 rounded-lg">
+                    <div key={repo.name} className="p-3 bg-gray-100 rounded-lg break-inside-avoid">
                       <div className="flex items-center justify-between">
                         <div>
                           <p className="text-sm font-semibold text-gray-900">{repo.name}</p>
@@ -226,8 +226,9 @@ export function ReportExport({ profile, score, repos, languages, username }: Rep
               Generated by GitInsight AI · github.com/nithinreddybommireddy/git-insight-ai
             </div>
           </div>
-        </div>
-      </div>
+        </div>,
+        document.body
+      )}
     </>
   );
 }

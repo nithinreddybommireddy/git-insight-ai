@@ -93,13 +93,13 @@ export function ReportsPage() {
   const chartHeight = 200;
 
   return (
-    <div className="min-h-screen pt-20 pb-16">
+    <div className="min-h-screen pt-20 pb-16 print:min-h-0 print:pt-0 print:pb-0">
       <div className="max-w-6xl mx-auto px-4">
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-8"
+          className="mb-8 print:hidden"
         >
           <div className="flex items-center gap-2 mb-4">
             <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="gap-1.5">
@@ -128,7 +128,7 @@ export function ReportsPage() {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="grid grid-cols-3 gap-4 mb-8"
+            className="grid grid-cols-3 gap-4 mb-8 print:hidden"
           >
             <Card className="text-center py-4">
               <BarChart3 className="w-5 h-5 mx-auto mb-1.5 text-primary" />
@@ -153,7 +153,7 @@ export function ReportsPage() {
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="mb-8"
+          className="mb-8 print:hidden"
         >
           <Card>
             <CardContent className="!py-5">
@@ -191,7 +191,7 @@ export function ReportsPage() {
             className="space-y-6"
           >
             {/* Header with export */}
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between print:hidden">
               <div className="flex items-center gap-2">
                 <LineChart className="w-5 h-5 text-primary" />
                 <h2 className="text-lg font-semibold">
@@ -222,7 +222,7 @@ export function ReportsPage() {
 
             {/* Score Over Time Chart */}
             {history.length > 1 && (
-              <Card>
+              <Card className="print:hidden">
                 <CardContent className="!p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <TrendingUp className="w-5 h-5 text-primary" />
@@ -324,7 +324,7 @@ export function ReportsPage() {
 
             {/* Score History Table */}
             {history.length > 0 && (
-              <Card>
+              <Card className="print:hidden">
                 <CardContent className="!p-5">
                   <div className="flex items-center gap-2 mb-4">
                     <Clock className="w-5 h-5 text-primary" />
@@ -380,7 +380,7 @@ export function ReportsPage() {
             )}
 
             {/* Summary stats for this report */}
-            <Card>
+            <Card className="print:hidden">
               <CardContent className="!p-5">
                 <div className="flex items-center gap-2 mb-4">
                   <Star className="w-5 h-5 text-primary" />
