@@ -194,15 +194,41 @@ function MetricCard({
           </div>
 
           {/* Two scores side by side */}
-          <div className="flex items-center gap-4 mb-3">
-            <div className="flex-1 text-center">
-              <p className="text-[10px] text-muted-foreground truncate">{user1Name}</p>
-              <p className={`text-lg font-bold tabular-nums ${isWinner ? "text-primary" : "text-muted-foreground"}`}>{user1Value}</p>
+          <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 mb-3 w-full">
+            <div className="min-w-0 text-center">
+              <p
+                className="text-[10px] text-muted-foreground truncate"
+                title={user1Name}
+              >
+                {user1Name}
+              </p>
+              <p
+                className={`text-lg font-bold tabular-nums ${
+                  isWinner ? "text-primary" : "text-muted-foreground"
+                }`}
+              >
+                {user1Value}
+              </p>
             </div>
-            <div className="text-[10px] text-muted-foreground font-bold">VS</div>
-            <div className="flex-1 text-center">
-              <p className="text-[10px] text-muted-foreground truncate">{user2Name}</p>
-              <p className={`text-lg font-bold tabular-nums ${!isWinner ? "text-cyan-400" : "text-muted-foreground"}`}>{user2Value}</p>
+
+            <div className="text-[10px] text-muted-foreground font-bold shrink-0">
+              VS
+            </div>
+
+            <div className="min-w-0 text-center">
+              <p
+                className="text-[10px] text-muted-foreground truncate"
+                title={user2Name}
+              >
+                {user2Name}
+              </p>
+              <p
+                className={`text-lg font-bold tabular-nums ${
+                  !isWinner ? "text-cyan-400" : "text-muted-foreground"
+                }`}
+              >
+                {user2Value}
+              </p>
             </div>
           </div>
 
@@ -685,7 +711,7 @@ export function ComparePage() {
                       <p className="text-xs text-muted-foreground">Each metric scored 0-100 with weight, explanation, and improvement tip</p>
                     </div>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-4">
                     {metricsConfig.map(({ key }) => {
                       const detailKey = (key + "Details") as keyof DeveloperScore;
                       const v1 = result.user1.score![key] as unknown as number;
@@ -770,3 +796,4 @@ export function ComparePage() {
     </div>
   );
 }
+
