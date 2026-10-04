@@ -57,6 +57,13 @@ public class JwtAuthenticationFilter implements GlobalFilter, Ordered {
      * Public route prefixes. Matching uses exact-segment logic:
      * {@code path.equals(prefix) || path.startsWith(prefix + "/")}
      * so that {@code /api/githubFake} does NOT match prefix {@code /api/github}.
+     *
+     * <p>The gateway root {@code /} is public so the deployment's root URL can
+     * answer a lightweight status without a token and without touching any
+     * downstream service. It is intentionally NOT a prefix entry (see the
+     * comment on RootStatusController): a {@code /} entry would be matched by
+     * {@code path.startsWith("/")} and would steal {@code /api/**} and
+     * {@code /actuator/**} requests from their real routes and filters.
      */
     private static final Set<String> PUBLIC_PREFIXES = Set.of(
             "/api/auth/register",
