@@ -541,6 +541,19 @@ public class JobMatcherService {
      * ({@link #MIN_REPOSITORY_COVERAGE} repos per candidate).
      */
     public JobMatchResponse matchAsync(String jdText, List<String> usernames, String source, boolean includeAi) {
+        // Backward-compatible entry point: no per-candidate progress reporting.
+        return matchAsync(jdText, usernames, source, includeAi, null);
+    }
+
+    /**
+     * Asynchronous match mode with live progress reporting.
+     *
+     * @param onCandidateDone called sequentially after each candidate finishes
+     *        with (processed, failed, total); may be null. Failures inside the
+     *        callback must never abort the match — they are swallowed upstream.
+     */
+    public JobMatchResponse matchAsync(String jdText, List<String> usernames, String source,
+                                       boolean includeAi, MatchProgressListener onCandidateDone) {
         // Use Long.MAX_VALUE as deadline — effectively no global time limit.
         // Per-candidate evidence time and request budget still apply.
         MatchContext ctx = new MatchContext(
@@ -550,7 +563,18 @@ public class JobMatcherService {
                 fullEvidenceSourceFileCap,
                 fullEvidenceAnalysisTimeMs,
                 minRepositoryCoverage);
-        return matchInternal(jdText, usernames, source, includeAi, ctx);
+        return matchInternal(jdText, usernames, source, includeAi, ctx, onCandidateDone);
+    }
+
+    /** Listener invoked after each candidate completes (or fails) in async mode. */
+    @FunctionalInterface
+    public interface MatchProgressListener {
+        void onProgress(int processed, int failed, int total);
+    }
+
+    private JobMatchResponse matchInternal(String jdText, List<String> usernames, String source,
+                                           boolean includeAi, MatchContext ctx) {
+        return matchInternal(jdText, usernames, source, includeAi, ctx, null);
     }
 
     /**
@@ -559,7 +583,8 @@ public class JobMatcherService {
      * deadline; async mode uses {@code Long.MAX_VALUE}.
      */
     private JobMatchResponse matchInternal(String jdText, List<String> usernames, String source,
-                                           boolean includeAi, MatchContext ctx) {
+                                           boolean includeAi, MatchContext ctx,
+                                           MatchProgressListener onCandidateDone) {
         List<String> required = extractRequiredSkills(jdText);
         Map<String, SkillCategory> classification = extractSkillClassification(jdText);
         Set<String> mandatorySkills = classification.entrySet().stream()
@@ -587,6 +612,15 @@ public class JobMatcherService {
             } catch (Exception e) {
                 failed++;
                 log.warn("Job match: failed to analyze candidate {}: {}", username, e.getMessage());
+            }
+            // Live progress: notify after EVERY candidate outcome (success or
+            // failure) so the job's processed/failed counters grow in the DB.
+            if (onCandidateDone != null) {
+                try {
+                    onCandidateDone.onProgress(results.size(), failed, usernames.size());
+                } catch (Exception pe) {
+                    log.debug("Job match: progress listener failed: {}", pe.getMessage());
+                }
             }
         }
 

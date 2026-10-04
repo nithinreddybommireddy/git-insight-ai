@@ -87,6 +87,12 @@ services:
       JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      # Per-IP budgets for the public analysis surface (GitHubRateLimitFilter).
+      # Defaults preserve the original behavior; raise the score budget in
+      # production where recruiter job matches score many candidates.
+      GITHUB_SCORE_RATE_LIMIT_PER_MINUTE: ${GITHUB_SCORE_RATE_LIMIT_PER_MINUTE:-10}
+      GITHUB_ORG_RATE_LIMIT_PER_MINUTE: ${GITHUB_ORG_RATE_LIMIT_PER_MINUTE:-5}
+      GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE: ${GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE:-60}
       # Shared secret that lets auth-service call this service's internal AI
       # endpoints. Must match on both services (see docker/env.example).
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-}
@@ -131,6 +137,8 @@ services:
         EUREKA_CLIENT_ENABLED: ${EUREKA_CLIENT_ENABLED:-true}
         JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required — set it before starting}
         JWT_MIN_SECRET_BYTES: ${JWT_MIN_SECRET_BYTES:-64}
+        # Per-IP budget for login/register/password-reset attempts (RateLimitFilter).
+        AUTH_RATE_LIMIT_PER_MINUTE: ${AUTH_RATE_LIMIT_PER_MINUTE:-20}
         REDIS_HOST: redis
         REDIS_PASSWORD: ${REDIS_PASSWORD:-}
 

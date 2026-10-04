@@ -86,6 +86,9 @@ const u2Score = score({
   },
 });
 
+// Exact tie on every metric — ties must render as ties, not as a user1 win.
+const tieScore = score({ overallScore: 60 });
+
 function renderCompare() {
   return render(
     <MemoryRouter>
@@ -208,5 +211,109 @@ describe("ComparePage", () => {
     // Alice's column still renders fully — the failed user does not blank the page.
     await waitFor(() => expect(screen.getByText("Expert")).toBeInTheDocument());
     expect(screen.getAllByText("90").length).toBeGreaterThan(0);
+  });
+
+  it("renders both metric values with equal contrast — loser value never dimmed, leader shown via badge", async () => {
+    vi.mocked(githubApi.compare).mockResolvedValue({
+      user1: {
+        username: "alice",
+        profile: { username: "alice", name: "Alice", avatarUrl: "a.png", publicRepositories: 10, followers: 5, profileUrl: "u/alice" } as any,
+        repos: [],
+        score: u1Score,
+      },
+      user2: {
+        username: "bob",
+        profile: { username: "bob", name: "Bob", avatarUrl: "b.png", publicRepositories: 3, followers: 2, profileUrl: "u/bob" } as any,
+        repos: [],
+        score: u2Score,
+      },
+    });
+
+    renderCompare();
+    await userEvent.type(screen.getAllByPlaceholderText("e.g. torvalds")[0], "alice");
+    await userEvent.type(screen.getByPlaceholderText("e.g. addyosmani"), "bob");
+    await userEvent.click(screen.getByRole("button", { name: /compare/i }));
+
+    await waitFor(() => expect(screen.getAllByText("90").length).toBeGreaterThan(0));
+
+    // Both values are rendered in `text-foreground` (equal contrast) — no
+    // value is ever styled with the near-invisible `text-muted-foreground`.
+    for (const el of screen.getAllByText("90")) {
+      expect(el.className).not.toContain("text-muted-foreground");
+      expect(el.className).toContain("text-foreground");
+    }
+    for (const el of screen.getAllByText("30")) {
+      expect(el.className).not.toContain("text-muted-foreground");
+      expect(el.className).toContain("text-foreground");
+    }
+
+    // The leader is marked with a "Leads" badge (user1 leads recency 90 vs 30).
+    expect(screen.getAllByText("Leads").length).toBe(1);
+    // In this fixture 9 of the 10 metrics are tied at 50/50, so those cards
+    // correctly show "Tied" — only the differing (recency) metric gets a winner.
+    expect(screen.getAllByText("Tied").length).toBe(9);
+  });
+
+  it("represents an exact tie as a tie — no winner badge", async () => {
+    vi.mocked(githubApi.compare).mockResolvedValue({
+      user1: {
+        username: "alice",
+        profile: { username: "alice", name: "Alice", avatarUrl: "a.png", publicRepositories: 10, followers: 5, profileUrl: "u/alice" } as any,
+        repos: [],
+        score: tieScore,
+      },
+      user2: {
+        username: "bob",
+        profile: { username: "bob", name: "Bob", avatarUrl: "b.png", publicRepositories: 3, followers: 2, profileUrl: "u/bob" } as any,
+        repos: [],
+        score: tieScore,
+      },
+    });
+
+    renderCompare();
+    await userEvent.type(screen.getAllByPlaceholderText("e.g. torvalds")[0], "alice");
+    await userEvent.type(screen.getByPlaceholderText("e.g. addyosmani"), "bob");
+    await userEvent.click(screen.getByRole("button", { name: /compare/i }));
+
+    await waitFor(() => expect(screen.getAllByText("50").length).toBeGreaterThan(0));
+    // Ties show the tie marker and never a "Leads" badge (the old `>=`
+    // logic would have declared user1 the winner on every metric).
+    expect(screen.queryByText("Leads")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Tied").length).toBe(10);
+  });
+
+  it("keeps long developer names readable — full name in the title tooltip, not hard-truncated", async () => {
+    const longName = "Bartholomew Fitzgerald Montgomery-Whittaker III";
+    vi.mocked(githubApi.compare).mockResolvedValue({
+      user1: {
+        username: "alice",
+        profile: { username: "alice", name: longName, avatarUrl: "a.png", publicRepositories: 10, followers: 5, profileUrl: "u/alice" } as any,
+        repos: [],
+        score: u1Score,
+      },
+      user2: {
+        username: "bob",
+        profile: { username: "bob", name: "Bob", avatarUrl: "b.png", publicRepositories: 3, followers: 2, profileUrl: "u/bob" } as any,
+        repos: [],
+        score: u2Score,
+      },
+    });
+
+    renderCompare();
+    await userEvent.type(screen.getAllByPlaceholderText("e.g. torvalds")[0], "alice");
+    await userEvent.type(screen.getByPlaceholderText("e.g. addyosmani"), "bob");
+    await userEvent.click(screen.getByRole("button", { name: /compare/i }));
+
+    await waitFor(() => expect(screen.getAllByText("90").length).toBeGreaterThan(0));
+    // The full name is available via the native tooltip, and the element wraps
+    // naturally (text-balance) instead of hard-truncating to a single line.
+    const nameEls = screen.getAllByTitle(longName);
+    expect(nameEls.length).toBeGreaterThan(0);
+    for (const el of nameEls) {
+      expect(el.textContent).toBe(longName);
+      expect(el.className).toContain("text-balance");
+      expect(el.className).not.toContain("line-clamp-1");
+      expect(el.className).not.toContain("truncate");
+    }
   });
 });

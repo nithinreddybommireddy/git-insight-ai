@@ -20,6 +20,10 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 | `GITHUB_SERVICE_URL` | auth-service | `http://localhost:8081` | Internal URL for auth→github-service server-to-server calls. **Production:** use Railway private networking, e.g. `http://<github-service-private-domain>:8081` (copy the actual Private Domain from the Railway service Settings tab) |
 | `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | auth + github-service | `localhost` / `6379` / *(empty)* | Shared Redis: GitHub/AI cache, AI rate limiting (github-service), login rate limiting + OAuth state (auth-service). Services degrade gracefully when Redis is down |
 | `AI_RATE_LIMIT_PER_MINUTE` | github-service | `30` | Per-client budget for `/api/ai/**` (each call can consume Gemini quota) |
+| `GITHUB_SCORE_RATE_LIMIT_PER_MINUTE` | github-service | `10` | Per-IP budget for `/score`, `/commits/analytics`, `/commits/diffs`. Raise in production — a recruiter job match scores every candidate |
+| `GITHUB_ORG_RATE_LIMIT_PER_MINUTE` | github-service | `5` | Per-IP budget for `/org/{org}/overview` |
+| `GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE` | github-service | `60` | Per-IP budget for cheap reads (profile, repos, languages, ...) |
+| `AUTH_RATE_LIMIT_PER_MINUTE` | auth-service | `20` | Per-IP budget for login/register/password-reset attempts |
 | `AUTH_COOKIE_SECURE` | auth-service | `false` | Set `true` behind HTTPS so the HttpOnly session cookies get the `Secure` flag |
 | `CORS_ALLOWED_ORIGINS` | auth + github-service | `http://localhost:5173` | Comma-separated frontend origin allowlist — only needed when the frontend is hosted on a different origin than the backend (see `docs/DEPLOYMENT.md`) |
 | `SHOW_SQL` | github + analytics-service | `false` | Set `true` to log Hibernate SQL while debugging |
@@ -28,8 +32,8 @@ Set these in your shell, or in each service's IDE run configuration (IntelliJ: R
 ## Which service reads what
 
 - **api-gateway** — `JWT_SECRET`, `EUREKA_URL`, `CORS_ALLOWED_ORIGINS`
-- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AI_RATE_LIMIT_PER_MINUTE`, `CORS_ALLOWED_ORIGINS`, `SHOW_SQL`
-- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAME_SITE`, `CORS_ALLOWED_ORIGINS`
+- **github-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_TOKEN`, `GEMINI_API_KEY`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AI_RATE_LIMIT_PER_MINUTE`, `GITHUB_SCORE_RATE_LIMIT_PER_MINUTE`, `GITHUB_ORG_RATE_LIMIT_PER_MINUTE`, `GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE`, `CORS_ALLOWED_ORIGINS`, `SHOW_SQL`
+- **auth-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `JWT_SECRET`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_OAUTH_REDIRECT_URI`, `OAUTH_FRONTEND_REDIRECT_URI`, `GITHUB_SERVICE_URL`, `REDIS_HOST`/`REDIS_PORT`/`REDIS_PASSWORD`, `AUTH_RATE_LIMIT_PER_MINUTE`, `AUTH_COOKIE_SECURE`, `AUTH_COOKIE_SAME_SITE`, `CORS_ALLOWED_ORIGINS`
 - **analytics-service** — `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`, `SHOW_SQL`
 - **frontend** — `VITE_API_BASE` (build-time only; baked into the static bundle. **Empty** when using Vercel proxy.)
 

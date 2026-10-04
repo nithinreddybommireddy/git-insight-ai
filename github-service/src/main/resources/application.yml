@@ -57,6 +57,17 @@ app:
     # Per-client budget for the AI endpoints (/api/ai/**) — each Gemini call
     # consumes quota/money, so this guards against runaway or abusive traffic.
     ai-rate-limit-per-minute: ${AI_RATE_LIMIT_PER_MINUTE:30}
+    # Per-client budgets for the public GitHub analysis surface (/api/github/**),
+    # enforced by GitHubRateLimitFilter. Separate tiers so expensive endpoints
+    # (one score fans out into many upstream GitHub calls) cannot be hammered:
+    #   score/min covers /score, /commits/analytics and /commits/diffs
+    #   org/min covers /org/{org}/overview
+    #   general/min covers the cheap reads (profile, repos, languages, ...)
+    # A job-match run scores every candidate, so production can raise the
+    # score budget via GITHUB_SCORE_RATE_LIMIT_PER_MINUTE.
+    github-score-rate-limit-per-minute: ${GITHUB_SCORE_RATE_LIMIT_PER_MINUTE:10}
+    github-org-rate-limit-per-minute: ${GITHUB_ORG_RATE_LIMIT_PER_MINUTE:5}
+    github-general-rate-limit-per-minute: ${GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE:60}
     # Shared secret for internal server-to-server endpoints (/api/ai/job-match).
     # Must match INTERNAL_API_KEY on auth-service. When unset the internal
     # endpoints are disabled (fail closed) and recruiter AI explanations degrade

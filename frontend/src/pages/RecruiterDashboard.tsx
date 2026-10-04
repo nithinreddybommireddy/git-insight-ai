@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { AISummaryPanel } from "@/components/AISummaryPanel";
+import { SkillBadgeGroup } from "@/components/SkillBadges";
 import { useAuth } from "@/hooks/useAuth";
 import {
   recruiterApi,
@@ -40,7 +41,20 @@ import {
   XCircle,
   Sparkles,
   Target,
+  Clock,
 } from "lucide-react";
+
+// ── Job-match polling tuning ────────────────────────────────────────────
+// Interval is deliberately human-scale (2s): the requirement is "no request
+// storm", not maximal freshness. Deadline bounds a stuck job; MAX_POLL_RETRIES
+// bounds consecutive transport failures. 0–200ms-style intervals are avoided.
+const POLL_INTERVAL_MS = 2000;
+// Generous ceiling for a deep 25-candidate run on a cold Render instance —
+// the frontend stops polling (with a friendly message) but does NOT fail the job.
+const POLL_DEADLINE_MS = 15 * 60 * 1000;
+// Consecutive failed status requests tolerated before giving up (network blips,
+// gateway cold starts) — a single transient failure never aborts polling.
+const MAX_POLL_RETRIES = 5;
 
 const fitLabelColor = (label: string) =>
   label.toLowerCase().includes("strong")
@@ -50,6 +64,12 @@ const fitLabelColor = (label: string) =>
       : label.toLowerCase().includes("partial")
         ? "bg-amber-500/15 text-amber-400"
         : "bg-red-500/15 text-red-400";
+
+// ══════════════════════════════════════════════════════════════════
+//  Skill badges live in components/SkillBadges.tsx (shared, unit-tested).
+//  Presentation only — data comes verbatim from the backend's
+//  JobMatchResponse (skillCategories). See that module for the rules.
+// ══════════════════════════════════════════════════════════════════
 
 export function RecruiterDashboard() {
   const { user, logout } = useAuth();
@@ -73,6 +93,35 @@ export function RecruiterDashboard() {
   const [useAi, setUseAi] = useState(false);
   const [matchProgress, setMatchProgress] = useState<JobMatchJobStatus | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
+  // Which job the current polling loop is actively watching (drives the UI's
+  // "waiting for worker / taking longer than expected" copy and keeps stale
+  // responses for older jobs from clobbering the live one).
+  const [activeJobId, setActiveJobId] = useState<number | null>(null);
+  // True when the polling deadline elapses. The job itself is NOT marked
+  // failed — the backend remains the source of truth for the job state.
+  const [matchStalled, setMatchStalled] = useState(false);
+
+  // ── Polling lifecycle guards (single sequential loop, no overlapping requests) ──
+  // Generation token: a poll loop captures it at start and aborts after every
+  // await if it changed. A new run / terminal state / unmount invalidates the old loop.
+  const matchRunRef = useRef(0);
+  // Descriptor of the one in-flight or scheduled poll { jobId, retryCount, deadline }.
+  const matchPollRef = useRef<{ jobId: number; retryCount: number; deadline: number } | null>(null);
+  // Handle of the scheduled next poll — cleared on terminal state / reset / unmount.
+  const matchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** Invalidate the active poll loop (if any) and clear its scheduled request. */
+  const resetMatchPoll = useCallback(() => {
+    matchRunRef.current += 1; // any running loop sees a changed token and stops
+    matchPollRef.current = null;
+    if (matchTimerRef.current !== null) {
+      clearTimeout(matchTimerRef.current);
+      matchTimerRef.current = null;
+    }
+  }, []);
+
+  // Cleanup on unmount — no polling after the page is gone.
+  useEffect(() => resetMatchPoll, [resetMatchPoll]);
 
   const loadCandidates = useCallback(async () => {
     try {
@@ -216,48 +265,135 @@ export function RecruiterDashboard() {
 
   const handleRunMatch = async () => {
     if (!jdFile) return;
+    if (matchLoading) return; // one active job at a time — re-clicks are ignored
+
+    // Invalidate any previous poll loop and start a fresh run.
+    const runToken = ++matchRunRef.current;
+    matchPollRef.current = null;
+    if (matchTimerRef.current !== null) {
+      clearTimeout(matchTimerRef.current);
+      matchTimerRef.current = null;
+    }
+
     setMatchLoading(true);
     setMatchError(null);
     setMatchResult(null);
     setMatchProgress(null);
+    setMatchStalled(false);
+
+    /** Finish the run cleanly (terminal state reached). */
+    const finishRun = () => {
+      resetMatchPoll();
+      setMatchLoading(false);
+      setMatchProgress(null);
+      setActiveJobId(null);
+    };
+
+    /** One status request. NEVER overlaps: the next poll is scheduled only in
+     *  a callback fired AFTER this request has fully settled, so at most one
+     *  GET /api/recruiter/match/{jobId} is ever in flight for a job.
+     *  @param retryCount consecutive failed status requests so far (reset on success). */
+    const pollStatusOnce = async (jobId: number, retryCount: number, deadline: number): Promise<void> => {
+      if (runToken !== matchRunRef.current) return; // superseded by a newer run/unmount
+      try {
+        const status = await recruiterApi.getJobMatchStatus(jobId);
+        if (runToken !== matchRunRef.current) return; // superseded while awaiting
+
+        if (status.success && status.data) {
+          matchPollRef.current = null;
+          setMatchProgress(status.data);
+
+          if (status.data.status === "COMPLETED" || status.data.status === "PARTIAL") {
+            if (status.data.result) {
+              setMatchResult(status.data.result);
+              toast.success(
+                status.data.status === "COMPLETED"
+                  ? `Ranked ${status.data.result.results.length} candidates by job fit`
+                  : `Ranked ${status.data.result.results.length} candidates (some could not be scored)`
+              );
+            }
+            finishRun();
+            return;
+          }
+          if (status.data.status === "FAILED") {
+            const msg = status.data.errorMessage || "Job match failed on the server.";
+            finishRun();
+            setMatchError(msg);
+            toast.error(msg);
+            return;
+          }
+          // QUEUED / RUNNING → non-terminal: keep polling below.
+        } else if (retryCount >= MAX_POLL_RETRIES) {
+          // Status request failed too many times in a row (persistent network/
+          // gateway failure or an unexpected 404) — stop instead of spinning.
+          const msg = "Lost track of the job match. Refresh to check its status.";
+          finishRun();
+          setMatchError(msg);
+          toast.error(msg);
+          return;
+        }
+
+        // Deadline guard: a stuck job must not be polled forever. The job is
+        // NOT falsely marked failed — the backend stays the source of truth.
+        if (Date.now() >= deadline) {
+          finishRun();
+          setMatchStalled(true);
+          return;
+        }
+
+        // Schedule exactly one next poll (sequential, non-overlapping).
+        // A successful request resets the consecutive-failure counter to 0.
+        scheduleNextPoll(jobId, status.success && status.data ? 0 : retryCount + 1, deadline);
+      } catch {
+        // Network error during the status request: bounded retry, loop never throws.
+        if (runToken !== matchRunRef.current) return;
+        if (retryCount >= MAX_POLL_RETRIES) {
+          const msg = "Lost track of the job match. Refresh to check its status.";
+          finishRun();
+          setMatchError(msg);
+          toast.error(msg);
+          return;
+        }
+        scheduleNextPoll(jobId, retryCount + 1, deadline);
+      }
+    };
+
+    /** Register the next poll and fire it only if this run is still current. */
+    const scheduleNextPoll = (jobId: number, attempt: number, deadline: number) => {
+      matchPollRef.current = { jobId, retryCount: attempt, deadline };
+      matchTimerRef.current = setTimeout(() => {
+        matchTimerRef.current = null;
+        if (runToken === matchRunRef.current) {
+          void pollStatusOnce(jobId, attempt, deadline);
+        }
+      }, POLL_INTERVAL_MS);
+    };
+
     try {
       // Async path: deep evidence analysis runs on a background worker —
       // the synchronous endpoint is bounded by the 50s gateway timeout and
       // silently shallow-analyzes candidates when the clock runs out.
       const start = await recruiterApi.matchByJobDescriptionAsync(jdFile, usersFile, useAi);
+      if (runToken !== matchRunRef.current) return; // superseded while uploading
       if (!start.success || !start.data?.jobId) {
-        toast.error(start.message || "Match could not be started");
+        const msg = start.message || "Match could not be started";
+        toast.error(msg);
+        setMatchError(msg);
         setMatchLoading(false);
         return;
       }
 
       const jobId = start.data.jobId;
-      // Poll every 2s until terminal status.
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 2000));
-        const status = await recruiterApi.getJobMatchStatus(jobId);
-        if (!status.success || !status.data) {
-          throw new Error(status.message || "Lost track of the job match");
-        }
-        setMatchProgress(status.data);
-        if (status.data.status === "COMPLETED" || status.data.status === "PARTIAL") {
-          if (status.data.result) {
-            setMatchResult(status.data.result);
-            toast.success(`Ranked ${status.data.result.results.length} candidates by job fit`);
-          }
-          break;
-        }
-        if (status.data.status === "FAILED") {
-          throw new Error(status.data.errorMessage || "Job match failed");
-        }
-      }
+      setActiveJobId(jobId);
+      // First poll fires immediately; subsequent polls are strictly sequential.
+      await pollStatusOnce(jobId, 0, Date.now() + POLL_DEADLINE_MS);
     } catch (err: any) {
+      if (runToken !== matchRunRef.current) return; // superseded
       const msg = err?.message || "Match failed — is the backend running?";
       setMatchError(msg);
       toast.error(msg);
-    } finally {
       setMatchLoading(false);
-      setMatchProgress(null);
+      setActiveJobId(null);
     }
   };
 
@@ -458,13 +594,36 @@ export function RecruiterDashboard() {
                 {matchLoading && (
                   <span className="text-[11px] text-muted-foreground animate-pulse">
                     {matchProgress
-                      ? `Deep analysis: ${matchProgress.processed}/${matchProgress.total} candidates scored (${matchProgress.progressPercent}%)`
+                      ? matchProgress.status === "QUEUED"
+                        ? `Deep analysis: queued (${matchProgress.total} candidates) — waiting for a worker…`
+                        : `Deep analysis: ${matchProgress.processed}/${matchProgress.total} candidates scored (${matchProgress.progressPercent}%)`
                       : useAi
                         ? "Starting deep analysis & asking Gemini for fit explanations…"
                         : "Starting deep evidence analysis…"}
                   </span>
                 )}
               </div>
+
+              {/* Deadline reached: the backend job is NOT marked failed — the
+                  user is told how to re-check instead of a false failure. */}
+              {matchStalled && !matchLoading && (
+                <Card className="p-3.5 mt-4">
+                  <p className="text-[11px] text-amber-400 flex items-center gap-1.5">
+                    <Clock className="w-3 h-3" />
+                    Job is taking longer than expected. You can refresh and check the status again.
+                  </p>
+                </Card>
+              )}
+              {/* Terminal failure (or persistent status-request failures) —
+                  shown even when no result block exists. */}
+              {matchError && !matchLoading && (
+                <Card className="p-3.5 mt-4">
+                  <p className="text-[11px] text-red-400 flex items-center gap-1.5">
+                    <XCircle className="w-3 h-3" />
+                    {matchError}
+                  </p>
+                </Card>
+              )}
             </CardContent>
           </Card>
         </motion.div>
@@ -633,38 +792,16 @@ export function RecruiterDashboard() {
 
                         <div className="mt-3 pt-3 border-t border-border/50 space-y-2">
                           <div className="flex flex-wrap gap-1">
-                            {c.matchedSkills.slice(0, 7).map((s) => (
-                              <span
-                                key={s}
-                                title={
-                                  matchResult.skillCategories?.[s] === "MANDATORY"
-                                    ? "Mandatory skill — proven by repository evidence"
-                                    : matchResult.skillCategories?.[s] === "PREFERRED"
-                                      ? "Preferred skill — proven by repository evidence"
-                                      : "Required skill — proven by repository evidence"
-                                }
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center gap-1"
-                              >
-                                <CheckCircle2 className="w-2.5 h-2.5" />
-                                {s}
-                              </span>
-                            ))}
-                            {c.missingSkills.slice(0, 7).map((s) => (
-                              <span
-                                key={s}
-                                title={
-                                  matchResult.skillCategories?.[s] === "MANDATORY"
-                                    ? "Mandatory skill — missing (counts double against the match)"
-                                    : matchResult.skillCategories?.[s] === "PREFERRED"
-                                      ? "Preferred skill — missing"
-                                      : "Required skill — missing"
-                                }
-                                className="text-[10px] px-2 py-0.5 rounded-full bg-muted/30 text-muted-foreground flex items-center gap-1"
-                              >
-                                <XCircle className="w-2.5 h-2.5 text-red-400/70" />
-                                {s}
-                              </span>
-                            ))}
+                            <SkillBadgeGroup
+                              skills={c.matchedSkills}
+                              matched
+                              categories={matchResult.skillCategories}
+                            />
+                            <SkillBadgeGroup
+                              skills={c.missingSkills}
+                              matched={false}
+                              categories={matchResult.skillCategories}
+                            />
                             {c.missingSkills.length === 0 && c.matchedSkills.length > 0 && (
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400">
                                 Full skill match

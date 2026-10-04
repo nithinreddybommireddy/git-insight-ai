@@ -201,7 +201,7 @@ class AsyncJobMatchTest {
 
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 5, 5, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(42L), anyString(), any(), anyString(), anyInt(), anyInt(), anyInt(), anyString()))
                     .thenReturn(1);
@@ -216,7 +216,7 @@ class AsyncJobMatchTest {
 
             // matchAsync was called only ONCE
             verify(jobMatcherService, times(1))
-                    .matchAsync(anyString(), anyList(), anyString(), anyBoolean());
+                    .matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any());
         }
 
         @Test
@@ -229,7 +229,7 @@ class AsyncJobMatchTest {
             w.executeJobMatchAsync(42L);
 
             verify(jobRepository, never()).findById(anyLong());
-            verify(jobMatcherService, never()).matchAsync(anyString(), anyList(), anyString(), anyBoolean());
+            verify(jobMatcherService, never()).matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any());
         }
 
         @Test
@@ -240,7 +240,7 @@ class AsyncJobMatchTest {
             when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 3, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(1L), anyString(), any(), anyString(), anyInt(), anyInt(), anyInt(), anyString()))
                     .thenReturn(1);
@@ -279,7 +279,7 @@ class AsyncJobMatchTest {
 
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 3, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
 
             // atomicCompleteJob returns 0 — token mismatch (stale worker)
@@ -304,7 +304,7 @@ class AsyncJobMatchTest {
 
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 5, 5, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(1L), anyString(), eq(JobMatchJob.JobStatus.COMPLETED), anyString(), eq(5), eq(0), eq(5), anyString()))
                     .thenReturn(1);
@@ -327,7 +327,7 @@ class AsyncJobMatchTest {
             // 2 processed, 1 failed → PARTIAL
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 2, 1, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(1L), anyString(), eq(JobMatchJob.JobStatus.PARTIAL), anyString(), eq(2), eq(1), eq(3), anyString()))
                     .thenReturn(1);
@@ -350,7 +350,7 @@ class AsyncJobMatchTest {
             // 0 processed, 3 failed → FAILED
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 0, 3, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(1L), anyString(), eq(JobMatchJob.JobStatus.FAILED), anyString(), eq(0), eq(3), eq(3), anyString()))
                     .thenReturn(1);
@@ -494,7 +494,7 @@ class AsyncJobMatchTest {
 
             JobMatchResponse responseA = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 3, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(responseA);
 
             // Worker A's completion returns 0 (stale — token mismatch after recovery)
@@ -521,7 +521,7 @@ class AsyncJobMatchTest {
 
             JobMatchResponse response = new JobMatchResponse(
                     "Java", List.of("Java"), "saved", 3, 3, 0, List.of(), false, null, List.of());
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenReturn(response);
             when(jobRepository.atomicCompleteJob(eq(42L), anyString(), eq(JobMatchJob.JobStatus.COMPLETED), anyString(), eq(3), eq(0), eq(3), anyString()))
                     .thenReturn(1);
@@ -543,7 +543,7 @@ class AsyncJobMatchTest {
             when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
             when(jobRepository.atomicFailJob(eq(1L), anyString(), anyString())).thenReturn(0);
 
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenThrow(new RuntimeException("GitHub API down"));
 
             var w = new JobMatchJobService.JobMatchJobWorker(
@@ -635,7 +635,7 @@ class AsyncJobMatchTest {
             jobMatchJobService.getStatus(42L, testRecruiter);
             jobMatchJobService.getStatus(42L, testRecruiter);
 
-            verify(jobMatcherService, never()).matchAsync(anyString(), anyList(), anyString(), anyBoolean());
+            verify(jobMatcherService, never()).matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any());
         }
     }
 
@@ -698,7 +698,7 @@ class AsyncJobMatchTest {
             when(jobRepository.findById(1L)).thenReturn(Optional.of(job));
             when(jobRepository.atomicFailJob(eq(1L), anyString(), anyString())).thenReturn(1);
 
-            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean()))
+            when(jobMatcherService.matchAsync(anyString(), anyList(), anyString(), anyBoolean(), any()))
                     .thenThrow(new RuntimeException("GitHub API down"));
 
             var w = new JobMatchJobService.JobMatchJobWorker(

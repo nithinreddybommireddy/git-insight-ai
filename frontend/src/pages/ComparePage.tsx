@@ -158,18 +158,21 @@ function MetricCard({
 }) {
   const [showSuggestion, setShowSuggestion] = useState(false);
   const Icon = METRIC_ICONS[score.icon] || BarChart3;
-  const isWinner = user1Value >= user2Value;
+  // Ties must NOT be attributed to user1 (the old `>=` logic silently did).
+  const isTie = user1Value === user2Value;
+  const user1Wins = !isTie && user1Value > user2Value;
+  const user2Wins = !isTie && user2Value > user1Value;
 
   // The explanation/improvement-tip shown must belong to the user it describes.
   // Each user's score carries its own detail record, so pick the leader's
   // (falling back to the other user's when one is missing).
-  const leaderDetail = isWinner ? score : user2Score;
+  const leaderDetail = user1Wins ? score : user2Score;
   const explanation = leaderDetail?.explanation || score.explanation;
   const improvementSuggestion =
     leaderDetail?.improvementSuggestion || score.improvementSuggestion;
-  const explanationOwner = isWinner
+  const explanationOwner = user1Wins
     ? user1Name
-    : user2Score
+    : user2Wins
       ? user2Name
       : user1Name;
 
@@ -193,42 +196,44 @@ function MetricCard({
             </span>
           </div>
 
-          {/* Two scores side by side */}
+          {/* Two scores side by side — BOTH values always fully readable;
+              the leader is marked by a badge, never by dimming the loser. */}
           <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 mb-3 w-full">
             <div className="min-w-0 text-center">
               <p
-                className="text-[10px] text-muted-foreground truncate"
+                className="text-[10px] text-muted-foreground leading-tight text-balance"
                 title={user1Name}
               >
                 {user1Name}
               </p>
-              <p
-                className={`text-lg font-bold tabular-nums ${
-                  isWinner ? "text-primary" : "text-muted-foreground"
-                }`}
-              >
-                {user1Value}
-              </p>
+              <p className="text-lg font-bold tabular-nums text-foreground">{user1Value}</p>
+              {user1Wins && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-px rounded-full">
+                  <Trophy className="w-2.5 h-2.5" /> Leads
+                </span>
+              )}
             </div>
-
-            <div className="text-[10px] text-muted-foreground font-bold shrink-0">
-              VS
+            <div className="flex flex-col items-center gap-1 shrink-0">
+              <span className="text-[10px] text-muted-foreground font-bold">VS</span>
+              {isTie && (
+                <span className="inline-block text-[9px] font-semibold text-muted-foreground bg-muted/30 px-1.5 py-px rounded-full">
+                  Tied
+                </span>
+              )}
             </div>
-
             <div className="min-w-0 text-center">
               <p
-                className="text-[10px] text-muted-foreground truncate"
+                className="text-[10px] text-muted-foreground leading-tight text-balance"
                 title={user2Name}
               >
                 {user2Name}
               </p>
-              <p
-                className={`text-lg font-bold tabular-nums ${
-                  !isWinner ? "text-cyan-400" : "text-muted-foreground"
-                }`}
-              >
-                {user2Value}
-              </p>
+              <p className="text-lg font-bold tabular-nums text-foreground">{user2Value}</p>
+              {user2Wins && (
+                <span className="inline-flex items-center gap-0.5 text-[9px] font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-px rounded-full">
+                  <Trophy className="w-2.5 h-2.5" /> Leads
+                </span>
+              )}
             </div>
           </div>
 
@@ -386,7 +391,7 @@ function MetricMini({ label, value }: { label: string; value: number }) {
           transition={{ duration: 1, ease: "easeOut" }}
         />
       </div>
-      <span className="text-[9px] font-semibold tabular-nums w-5 text-right">{value}</span>
+      <span className="text-[9px] font-semibold tabular-nums w-5 text-right text-foreground">{value}</span>
     </div>
   );
 }

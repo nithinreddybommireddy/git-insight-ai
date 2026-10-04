@@ -69,6 +69,24 @@ public interface JobMatchJobRepository extends JpaRepository<JobMatchJob, Long> 
                       @Param("errorMessage") String errorMessage);
 
     /**
+     * Live per-candidate progress for a RUNNING job, owned by the executing worker
+     * (executionToken match). Committed in its own short transaction so pollers
+     * observe {@code processed}/{@code failed} counters growing during the run
+     * instead of 0/total until the final atomicCompleteJob write.
+     *
+     * @return 1 if updated, 0 when the job is no longer RUNNING/owned by this worker
+     */
+    @Modifying
+    @Query("UPDATE JobMatchJob j SET j.processed = :processed, j.failed = :failed " +
+           "WHERE j.id = :id AND j.status = com.gitinsight.authservice.entity.JobMatchJob$JobStatus.RUNNING " +
+           "AND j.executionToken = :executionToken")
+    int updateRunningProgress(
+            @Param("id") Long id,
+            @Param("executionToken") String executionToken,
+            @Param("processed") int processed,
+            @Param("failed") int failed);
+
+    /**
      * Recovery: find RUNNING jobs stuck from a previous process (started more than {@code staleThreshold} ago).
      * Resets them to QUEUED and clears the stale execution token so the old worker can no longer
      * complete/update the job. The next worker to claim it will receive a new execution token.

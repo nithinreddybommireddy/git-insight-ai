@@ -25,11 +25,17 @@ import java.util.List;
  * quota with unique usernames:
  *
  * <pre>
- *   /profile, /languages, /repos, /rate-limit   60/min
- *   /score, /commits/analytics, /commits/diffs   10/min
- *   /org/&lt;org&gt;/overview                           5/min
- *   anything else under /api/github              30/min
+ *   /score, /commits/analytics, /commits/diffs   10/min (default)
+ *   /org/&lt;org&gt;/overview                           5/min (default)
+ *   everything else (profile, repos, ...)        60/min (default)
  * </pre>
+ *
+ * <p>Budgets are configuration, not constants: set
+ * {@code GITHUB_SCORE_RATE_LIMIT_PER_MINUTE},
+ * {@code GITHUB_ORG_RATE_LIMIT_PER_MINUTE} and
+ * {@code GITHUB_GENERAL_RATE_LIMIT_PER_MINUTE} (via application.yml) to tune
+ * them per environment without a code change. A recruiter job match scores
+ * every candidate, so production commonly raises the score budget.
  *
  * <p>Budgets are Redis-backed (shared across instances) with an in-memory
  * fallback when Redis is down — the limiter never fails open for this surface
@@ -44,12 +50,23 @@ public class GitHubRateLimitFilter extends OncePerRequestFilter {
     private final RedisRateLimiter redisRateLimiter;
     private final InMemoryRateLimiter inMemoryRateLimiter;
 
+    /** Budgets are configuration (application.yml → env), not hardcoded numbers. */
+    private final int scorePerMinute;
+    private final int orgPerMinute;
+    private final int generalPerMinute;
+
     public GitHubRateLimitFilter(ObjectMapper objectMapper,
                                  RedisRateLimiter redisRateLimiter,
-                                 InMemoryRateLimiter inMemoryRateLimiter) {
+                                 InMemoryRateLimiter inMemoryRateLimiter,
+                                 @Value("${app.security.github-score-rate-limit-per-minute:10}") int scorePerMinute,
+                                 @Value("${app.security.github-org-rate-limit-per-minute:5}") int orgPerMinute,
+                                 @Value("${app.security.github-general-rate-limit-per-minute:60}") int generalPerMinute) {
         this.objectMapper = objectMapper;
         this.redisRateLimiter = redisRateLimiter;
         this.inMemoryRateLimiter = inMemoryRateLimiter;
+        this.scorePerMinute = scorePerMinute;
+        this.orgPerMinute = orgPerMinute;
+        this.generalPerMinute = generalPerMinute;
     }
 
     @Override
@@ -81,14 +98,14 @@ public class GitHubRateLimitFilter extends OncePerRequestFilter {
         chain.doFilter(request, response);
     }
 
-    private static int budgetFor(String uri) {
+    private int budgetFor(String uri) {
         if (uri.contains("/score") || uri.contains("/commits/analytics") || uri.contains("/commits/diffs")) {
-            return 10;
+            return scorePerMinute;
         }
         if (uri.contains("/org/") && uri.endsWith("/overview")) {
-            return 5;
+            return orgPerMinute;
         }
-        return 60;
+        return generalPerMinute;
     }
 
     private static String tierOf(String uri) {
@@ -101,6 +118,6 @@ public class GitHubRateLimitFilter extends OncePerRequestFilter {
 
     // Referenced by javadoc only — keeps the tier list discoverable.
     static List<String> routeTiers() {
-        return List.of("general (60/min)", "score (10/min)", "commits/analytics + diffs (10/min)", "org overview (5/min)");
+        return List.of("general (60/min default)", "score (10/min default)", "commits/analytics + diffs (10/min default)", "org overview (5/min default)");
     }
 }

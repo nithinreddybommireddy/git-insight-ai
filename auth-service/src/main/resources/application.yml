@@ -56,8 +56,11 @@ app:
     # is hosted on a different origin; same-origin proxies never trigger CORS).
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173}
   security:
-    # Per-IP brute-force guard for /api/auth/login and /api/auth/register (in-memory, per instance).
-    auth-rate-limit-per-minute: 20
+    # Per-IP brute-force guard for /api/auth/login, /api/auth/register and the
+    # password-reset endpoints (Redis-backed shared window in production).
+    # ENV: AUTH_RATE_LIMIT_PER_MINUTE — raise in production if legitimate
+    # users behind shared NATs (offices/CI) hit 429s; lower to tighten security.
+    auth-rate-limit-per-minute: ${AUTH_RATE_LIMIT_PER_MINUTE:20}
   internal-api-key: ${INTERNAL_API_KEY:}
   # Server-to-server credential used when calling github-service's internal AI
   # endpoints (/api/ai/job-match). Must match INTERNAL_API_KEY on github-service.
