@@ -43,9 +43,9 @@ export function Navbar() {
           {/* Logo */}
           <Link to="/" className="flex items-center gap-2.5 group">
             <img
-              src="/icon.svg"
+              src="/brand-logo.png"
               alt="GitInsight AI"
-              className="w-9 h-9 shrink-0 transition-transform duration-300 group-hover:scale-105"
+              className="w-9 h-9 shrink-0 rounded-lg object-contain transition-transform duration-300 group-hover:scale-105"
             />
             <span className="text-lg font-bold tracking-tight">
               <span className="text-[#1c2f6b] dark:text-[#a8c4e0]">GitInsight</span>

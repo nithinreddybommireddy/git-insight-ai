@@ -345,9 +345,9 @@ export function Landing() {
             transition={{ duration: 0.5, ease: "easeOut" }}
           >
             <img
-              src="/logo.svg"
+              src="/brand-logo.png"
               alt="GitInsight-AI — Analyze. Understand. Grow."
-              className="w-full max-w-sm mx-auto mb-8 rounded-3xl shadow-2xl shadow-black/40 ring-1 ring-primary/20"
+              className="w-full max-w-sm mx-auto mb-8 rounded-3xl object-contain shadow-2xl shadow-black/40 ring-1 ring-primary/20"
             />
             <h2 className="text-3xl sm:text-4xl font-bold mb-4">
               Ready to Explore Developer Analytics?
