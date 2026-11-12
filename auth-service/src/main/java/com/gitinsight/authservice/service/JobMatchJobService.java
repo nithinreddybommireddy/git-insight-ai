@@ -205,9 +205,11 @@ public class JobMatchJobService {
     @EventListener(ApplicationReadyEvent.class)
     @Transactional
     public void recoverStaleJobs() {
-        // 1. Recover stale RUNNING jobs (previous process died)
-        int recovered = jobRepository.recoverStaleJobs(
-                LocalDateTime.now().minusMinutes(STALE_RUNNING_MINUTES));
+        // 1. A service restart ends the previous worker process. Requeue every
+        // RUNNING job so it resumes on this instance instead of remaining stuck.
+        // Execution tokens on progress/completion writes prevent a draining old
+        // instance from overwriting the newly claimed execution.
+        int recovered = jobRepository.recoverStaleJobs(LocalDateTime.now().plusSeconds(1));
         if (recovered > 0) {
             log.info("Recovered {} stale RUNNING job(s) → QUEUED", recovered);
         }
