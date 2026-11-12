@@ -45,10 +45,10 @@ import {
 } from "lucide-react";
 
 // ── Job-match polling tuning ────────────────────────────────────────────
-// Interval is deliberately human-scale (2s): the requirement is "no request
-// storm", not maximal freshness. Deadline bounds a stuck job; MAX_POLL_RETRIES
-// bounds consecutive transport failures. 0–200ms-style intervals are avoided.
-const POLL_INTERVAL_MS = 2000;
+// A job can run for minutes, so polling every five seconds keeps network traffic
+// modest while still presenting useful progress. The loop is sequential: only
+// one status request can be active at any time.
+const POLL_INTERVAL_MS = 5000;
 // Generous ceiling for a deep 25-candidate run on a cold Render instance —
 // the frontend stops polling (with a friendly message) but does NOT fail the job.
 const POLL_DEADLINE_MS = 15 * 60 * 1000;
