@@ -113,7 +113,7 @@ public class JobMatcherService {
      * replaced by a safe deep-analysis cap. Configurable via
      * FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS.
      */
-    static final long FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS = 30_000;
+    static final long FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS = 15_000;
 
     /** Maximum directory depth when browsing the repo tree for source files. */
     private static final int SOURCE_TREE_DEPTH = 3; // max descent levels for package exploration
