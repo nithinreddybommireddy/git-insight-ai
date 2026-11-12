@@ -237,22 +237,6 @@ function MetricCard({
             </div>
           </div>
 
-          {/* Comparison bar */}
-          <div className="flex h-2 rounded-full bg-muted/20 overflow-hidden mb-3">
-            <motion.div
-              className="h-full rounded-l-full bg-gradient-to-r from-primary to-accent"
-              initial={{ width: 0 }}
-              animate={{ width: `${(user1Value / Math.max(user1Value + user2Value, 1)) * 100}%` }}
-              transition={{ duration: 0.8, ease: "easeOut" }}
-            />
-            <motion.div
-              className="h-full rounded-r-full bg-gradient-to-r from-cyan-500 to-blue-500"
-              initial={{ width: 0 }}
-              animate={{ width: `${(user2Value / Math.max(user1Value + user2Value, 1)) * 100}%` }}
-              transition={{ duration: 0.8, ease: "easeOut", delay: 0.2 }}
-            />
-          </div>
-
           {/* Explanation — attributed to the user it describes */}
           <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
             <span className="font-medium text-foreground/80">{explanationOwner}:</span>{" "}
