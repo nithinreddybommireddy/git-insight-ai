@@ -87,7 +87,7 @@ public class JobMatcherService {
      * deeper evidence without affecting the synchronous endpoint's latency.
      * Configurable via FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO.
      */
-    static final int FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO = 5;
+    static final int FULL_EVIDENCE_MAX_SOURCE_FILES_PER_REPO = 20;
 
     /**
      * Minimum number of repositories that must receive FULL evidence analysis
@@ -96,7 +96,7 @@ public class JobMatcherService {
      * means actual evidence inspection (docs/build/config/nested-module/source),
      * not merely metadata retrieval. Configurable via MIN_REPOSITORY_COVERAGE.
      */
-    static final int MIN_REPOSITORY_COVERAGE = 3;
+    static final int MIN_REPOSITORY_COVERAGE = 10;
 
     /**
      * Per-candidate evidence request budget in ASYNC FULL-EVIDENCE mode.
@@ -105,7 +105,7 @@ public class JobMatcherService {
      * before any skill is declared missing. Configurable via
      * FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE.
      */
-    static final int FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE = 50;
+    static final int FULL_EVIDENCE_REQUEST_BUDGET_PER_CANDIDATE = 250;
 
     /**
      * Per-candidate analysis time cap in ASYNC FULL-EVIDENCE mode (ms).
@@ -113,7 +113,7 @@ public class JobMatcherService {
      * replaced by a safe deep-analysis cap. Configurable via
      * FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS.
      */
-    static final long FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS = 15_000;
+    static final long FULL_EVIDENCE_MAX_ANALYSIS_TIME_PER_CANDIDATE_MS = 120_000;
 
     /** Maximum directory depth when browsing the repo tree for source files. */
     private static final int SOURCE_TREE_DEPTH = 3; // max descent levels for package exploration
@@ -1019,7 +1019,15 @@ public class JobMatcherService {
         }
 
         final String finalCorpus = corpus;
-        List<String> matched = required.stream().filter(s -> matches(finalCorpus, s)).collect(Collectors.toList());
+        // Keep the final result aligned with the evidence engine. Source-aware
+        // detectors (for example @ResponseEntity, useEffect, PostgreSQL, and a
+        // Dockerfile path) are intentionally broader than the JD alias regex.
+        // A skill recorded with repository provenance is therefore a match even
+        // when its literal alias is absent from the concatenated text corpus.
+        List<String> evidencedSkills = tracker.skills();
+        List<String> matched = required.stream()
+                .filter(skill -> matches(finalCorpus, skill) || evidencedSkills.contains(skill))
+                .collect(Collectors.toList());
         List<String> missing = required.stream().filter(s -> !matched.contains(s)).collect(Collectors.toList());
 
         int skillMatchPercent = computeWeightedSkillMatchPercent(required, matched, mandatorySkills);
@@ -1164,9 +1172,9 @@ public class JobMatcherService {
                 List<String> unresolved = unresolvedSkills(required, confirmedSkills); // re-rank driver
                 List<RepoView> remaining = selected.subList(i, selected.size());
                 remaining.sort(Comparator
-                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, unresolved))
-                        .thenComparingInt(RepoView::stars)
-                        .reversed());
+                        .comparingInt((RepoView r) -> computeRepoRelevance(r, unresolved))
+                        .reversed()
+                        .thenComparing(Comparator.comparingInt(RepoView::stars).reversed()));
                 log.debug("JobMatch candidate={} unresolvedSkills={} re-ranked repos {}+ for targeted search",
                         username, unresolved, i + 1);
             }
@@ -1216,7 +1224,7 @@ public class JobMatcherService {
 
     /**
      * Record evidence for every required skill that this evidence chunk proves
-     * (chunk-level {@link #matches}). Recording is idempotent: the tracker keeps
+     * (chunk-level {@link #matchesEvidence}). Recording is idempotent: the tracker keeps
      * the highest-confidence record per skill, and {@code confirmedSkills} is
      * only ever additive.
      */
@@ -1234,7 +1242,7 @@ public class JobMatcherService {
         if (chunk == null || chunk.isBlank() || required == null) return;
         String lower = chunk.toLowerCase(Locale.ROOT);
         for (String skill : required) {
-            if (matchesStatic(lower, skill)) {
+            if (matchesEvidence(lower, file, skill)) {
                 confirmedSkills.add(skill);
                 tracker.record(skill, confidenceRank, repository, module, file, branch, evidenceType);
             }
@@ -1271,6 +1279,20 @@ public class JobMatcherService {
     }
 
     /**
+     * Unified evidence predicate used by every repository evidence category.
+     * The alias dictionary handles ordinary mentions; sourcePatternMatches adds
+     * technology-specific proof that cannot always be represented by a single
+     * text alias (e.g. @ResponseEntity, useEffect, SQL migrations, or Dockerfile
+     * filenames). Keeping this in one place prevents extraction and scoring
+     * from disagreeing about whether a skill was actually found.
+     */
+    static boolean matchesEvidence(String content, String filename, String canonicalSkill) {
+        if (content == null || content.isBlank() || canonicalSkill == null) return false;
+        return matchesStatic(content.toLowerCase(Locale.ROOT), canonicalSkill)
+                || sourcePatternMatches(content, filename, canonicalSkill);
+    }
+
+    /**
      * Slots reserved for exploration: repos with weak metadata but strong
      * ecosystem/project signals. Ensures generic repos with relevant source
      * code are not excluded solely because their name/description lacks keywords.
@@ -1296,9 +1318,9 @@ public class JobMatcherService {
         // Stage 1: score all repos by metadata keyword relevance
         List<RepoView> ranked = nonNull.stream()
                 .sorted(Comparator
-                        .comparingInt((RepoView r) -> -computeRepoRelevance(r, required))
-                        .thenComparingInt(RepoView::stars)
-                        .reversed())
+                        .comparingInt((RepoView r) -> computeRepoRelevance(r, required))
+                        .reversed()
+                        .thenComparing(Comparator.comparingInt(RepoView::stars).reversed()))
                 .toList();
 
         int limit = Math.min(nonNull.size(), HARD_MAX_EVIDENCE_REPOS);
@@ -1566,6 +1588,10 @@ public class JobMatcherService {
 
         private final Map<String, JobMatchResponse.SkillEvidenceView> bySkill = new LinkedHashMap<>();
         private final Map<String, Integer> bySkillRank = new java.util.HashMap<>();
+
+        List<String> skills() {
+            return List.copyOf(bySkill.keySet());
+        }
 
         void record(String skill, int confidenceRank, String repository, String module,
                     String file, String branch, String evidenceType) {
@@ -2597,16 +2623,17 @@ public class JobMatcherService {
         if (required == null || required.isEmpty()) return "";
 
         StringBuilder evidence = new StringBuilder();
-        Set<String> detected = new HashSet<>();
 
         for (String skill : required) {
             if (sourcePatternMatches(content, path, skill)) {
-                detected.add(skill);
-                // Append the specific annotation/pattern line for HIGH-evidence priority
+                // Always emit the canonical skill marker once a source-aware
+                // detector has proved it. Some valid detectors (notably a
+                // Dockerfile filename, @ResponseEntity, or useEffect) do not
+                // have a corresponding line in the older snippet switch.
                 String snippet = extractSourceSnippet(content, skill);
-                if (!snippet.isBlank()) {
-                    evidence.append("[").append(skill).append("] ").append(snippet).append('\n');
-                }
+                evidence.append("[").append(skill).append("]");
+                if (!snippet.isBlank()) evidence.append(' ').append(snippet);
+                evidence.append('\n');
             }
         }
 

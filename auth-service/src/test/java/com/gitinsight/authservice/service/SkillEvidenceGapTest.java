@@ -19,6 +19,30 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("Skill Evidence Gap Tests")
 class SkillEvidenceGapTest {
 
+    @Test
+    @DisplayName("Source-specific proof is retained even when the generic alias regex cannot see it")
+    void sourceSpecificEvidenceIsNotLostByGenericAliasMatcher() {
+        // These are deliberate gaps between sourcePatternMatches() and the
+        // generic SKILL_ALIASES regex. They used to be detected, then discarded
+        // because the snippet extractor / final matcher did not recognize them.
+        assertThat(JobMatcherService.matchesEvidence(
+                "@ResponseEntity<String> response() { return ResponseEntity.ok(\"ok\"); }",
+                "UserController.java", "REST API")).isTrue();
+        assertThat(JobMatcherService.matchesEvidence(
+                "useEffect(() => { loadUsers(); }, []);",
+                "Users.jsx", "React")).isTrue();
+        assertThat(JobMatcherService.matchesEvidence(
+                "@Column(name = \"email\") private String email;",
+                "User.java", "SQL")).isTrue();
+        assertThat(JobMatcherService.matchesEvidence(
+                "FROM eclipse-temurin:21\nWORKDIR /app\nCOPY app.jar app.jar",
+                "backend/Dockerfile", "Docker")).isTrue();
+
+        // Ordinary text matching remains conservative for unrelated files.
+        assertThat(JobMatcherService.matchesEvidence(
+                "public class UserService { }", "UserService.java", "SQL")).isFalse();
+    }
+
     // ══════════════════════════════════════════════════════════════════
     //  FIX 1 — MICROSERVICES
     // ══════════════════════════════════════════════════════════════════

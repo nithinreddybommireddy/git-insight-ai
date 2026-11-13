@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
@@ -14,9 +16,11 @@
     <artifactId>git-insight-ai</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <packaging>pom</packaging>
+
     <name>git-insight-ai</name>
     <description>GitInsight AI - Multi-module Microservices</description>
 
+    <!-- Modules -->
     <modules>
         <module>common</module>
         <module>eureka-server</module>
@@ -27,12 +31,16 @@
         <module>e2e-tests</module>
     </modules>
 
+    <!-- Project Properties -->
     <properties>
         <java.version>21</java.version>
         <spring-cloud.version>2025.0.3</spring-cloud.version>
         <modelmapper.version>3.2.4</modelmapper.version>
+        <lombok.version>1.18.46</lombok.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
     </properties>
 
+    <!-- Dependency Management -->
     <dependencyManagement>
         <dependencies>
             <dependency>
@@ -45,12 +53,15 @@
         </dependencies>
     </dependencyManagement>
 
+    <!-- Common Dependencies -->
     <dependencies>
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
+            <version>${lombok.version}</version>
             <optional>true</optional>
         </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -58,7 +69,9 @@
         </dependency>
     </dependencies>
 
+    <!-- Build Configuration -->
     <build>
+
         <pluginManagement>
             <plugins>
                 <plugin>
@@ -75,16 +88,34 @@
                 </plugin>
             </plugins>
         </pluginManagement>
+
         <plugins>
+
+            <!-- Explicit Lombok Annotation Processing -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <release>${maven.compiler.release}</release>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>${lombok.version}</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+
+            <!-- Maven Surefire -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <!-- JDK 21: allow Mockito's inline agent without the loud warning -->
                     <argLine>-XX:+EnableDynamicAgentLoading</argLine>
                 </configuration>
             </plugin>
+
         </plugins>
     </build>
-
 </project>
